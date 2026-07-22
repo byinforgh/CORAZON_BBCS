@@ -1,1827 +1,1549 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <title>CORAZON — Command Centre</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#eef2f0;
-  --card:#ffffff;
-  --ink:#16261f;
-  --ink-dim:#5b6b64;
-  --teal:#0d6e63;
-  --teal-dim:#e4f0ed;
-  --blue:#2f6fa3;
-  --blue-dim:#e7f0f7;
-  --coral:#b3402f;
-  --coral-dim:#f7e9e6;
-  --amber:#a97328;
-  --amber-dim:#f5ecdd;
-  --line:#d7e0dc;
-  --line-soft:#e7ede9;
-}
-*{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',sans-serif;min-height:100vh;}
-.mono{font-family:'IBM Plex Mono',monospace;}
-.display{font-family:'Space Grotesk',sans-serif;}
+// ============================================================
+// CORAZON BBCS — COMMAND CENTRE BACKEND  v4.4
+// Sheet: 1aAak9Ac6NzJmOGub9mx7zOsnzCAYxhRnhxPlpuY6AQY
+//
+// SETUP:
+// 1. Open the spreadsheet -> Extensions -> Apps Script.
+// 2. Paste this whole file into Code.gs (replacing whatever is there).
+// 3. Deploy -> Manage deployments -> Edit (pencil icon) -> New version.
+//    DO NOT use "New deployment" unless you deliberately want a new /exec
+//    URL — that breaks index.html until you paste the new URL into API_URL.
+// 4. Copy the /exec URL -> paste into API_URL in index.html (only needed
+//    once, unless you create a brand-new deployment).
+// 5. (Optional, for the AI Assistant) Project Settings -> Script
+//    Properties -> add ANTHROPIC_API_KEY with your key.
+//
+// v4.4 — PRIORITY FIX — getData() was doing 4-6x redundant full sheet
+// scans on every single refresh, which is what was causing "Timed out"
+// on the dashboard even after the payload-bloat fix in v4.3:
+//  - getDailySalesRaw() (a full read+parse of every DAILY_SALES row) was
+//    being called FOUR separate times per getData() call — once each
+//    from dailySales, clientHealth, revenue, and tracker. Each call
+//    re-read and re-parsed the entire sheet from scratch.
+//  - readDebtorCreditorTable() (a full read of DEBTORS_CREDITORS) was
+//    being called SIX separate times per getData() call — 2x from
+//    debtorsCreditors, 2x from followUps, 2x from tracker's aging calc.
+//  - getMainSS() calls SpreadsheetApp.openById(), a genuinely slow
+//    operation, and it was being called fresh inside nearly every single
+//    helper function — 30+ times per getData() call.
+//  - Because the CacheService cache only lives 20 seconds but the
+//    dashboard auto-refreshes every 60 seconds, EVERY auto-refresh paid
+//    this full redundant cost — there was no steady-state benefit from
+//    caching at all.
+//  Fixed with request-scoped memoization: a plain object reset at the
+//  top of every doGet() call now caches the open Spreadsheet reference,
+//  parsed DASHBOARD_SETTINGS, the parsed DAILY_SALES rows, and each
+//  parsed DEBTORS_CREDITORS table (keyed by which summary section) —
+//  each is computed once per request no matter how many sub-functions
+//  ask for it. Nothing about the data returned changes, only how many
+//  times it's recomputed.
+//
+// v4.3 — PRIORITY FIX — payload bloat that was stalling every refresh,
+// especially on mobile:
+//  - readGenericTable() previously counted ANY non-blank cell as "this
+//    row is real", including a bare "0". On the live sheet, the
+//    INVENTORY tab has formulas (Opening Stock / Lead Time) filled down
+//    to row ~1004 even though real products stop around row 79 — every
+//    one of those ~925 blank rows was outputting "0" in those two
+//    columns and getting shipped to the browser as if it were a real
+//    product. That alone added several hundred KB to *every* getData()
+//    response, re-fetched every 60 seconds by the dashboard. Fixed by
+//    ignoring a bare "0" when deciding whether a row has real content —
+//    a genuine row always has something else non-zero (a name, code,
+//    date, or formatted amount like "0.00"), so this is safe and does
+//    not exclude any real data. This is the fix that should make both
+//    the "stuck refreshing" and "mobile never loads" problems go away,
+//    since it's the same oversized-payload root cause for both.
+//
+// v4.2 — reliability/safety pass (no feature changes):
+//  - LOCKING: every write action (addSale, addDebtor, markCleared, etc.)
+//    now acquires a script lock before touching the sheet, so two people
+//    submitting at the exact same moment can no longer collide/overwrite
+//    each other's row. Read-only actions (getData/getSettings) are NOT
+//    locked, so the dashboard stays responsive while someone else saves.
+//  - CACHING: getData() is cached for 20 seconds via CacheService. Any
+//    write action clears that cache immediately so your own changes show
+//    up on the next refresh instead of being masked by stale cache. This
+//    also meaningfully cuts down execution time on slower connections —
+//    the #1 cause of a dashboard that "spins" on mobile is the Apps
+//    Script call itself taking too long, not the phone. (Note: before
+//    the v4.3 fix above, the INVENTORY bloat made the response too big
+//    to cache at all — CacheService has a 100KB per-key limit — so this
+//    caching was silently failing on every request. v4.3 should let it
+//    actually start working.)
+//  - VALIDATION: addSaleGET now rejects a missing stock code or a
+//    qty <= 0 with a clear {error:...} instead of writing a bad/blank
+//    row silently.
+//  - doGet/doPost are unchanged in behaviour for every existing action —
+//    the routing logic itself was only moved into routeAction() so the
+//    lock/cache logic could wrap around it in one place.
+//
+// v4.1 — adds a `branding_enabled` key to DASHBOARD_SETTINGS (default
+// 'true') so the "Powered by BYINFORGH" footer in index.html can be
+// toggled from Setup > Business Identity without editing code.
+//
+// v4.0 and earlier — see prior header comments in version history.
+// ============================================================
 
-.header{background:var(--card);border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;flex-wrap:wrap;gap:10px;}
-.brand{display:flex;align-items:center;gap:12px;}
-.brand-mark{width:38px;height:38px;border-radius:9px;background:var(--teal);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;}
-.brand-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:18px;letter-spacing:0.2px;}
-.brand-sub{font-size:10.5px;color:var(--ink-dim);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px;}
-.header-right{display:flex;align-items:center;gap:14px;}
-.live-dot{width:7px;height:7px;background:var(--teal);border-radius:50%;animation:pulse 2s infinite;}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.last-refresh{font-size:11px;color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;}
-.refresh-btn{background:var(--teal);border:none;color:#fff;padding:8px 16px;border-radius:7px;cursor:pointer;font-size:12px;font-family:'Space Grotesk',sans-serif;font-weight:600;letter-spacing:0.4px;}
-.refresh-btn:hover{background:#0a5850;}
-.refresh-btn.ghost{background:none;border:1px solid var(--line);color:var(--ink);}
-.refresh-btn.ghost:hover{border-color:var(--teal);color:var(--teal);}
-.refresh-btn.small{padding:5px 10px;font-size:10.5px;}
-.refresh-btn.coral{background:var(--coral);}
-.refresh-btn.coral:hover{background:#8f3225;}
-.refresh-btn:disabled{opacity:.5;cursor:not-allowed;}
+var SHEET_ID = '1aAak9Ac6NzJmOGub9mx7zOsnzCAYxhRnhxPlpuY6AQY';
+var TZ = 'Africa/Accra';
+var DATA_CACHE_KEY = 'corazon_getData_cache_v1';
 
-.main{padding:20px 24px 60px;max-width:1440px;margin:0 auto;}
-
-.tabs{display:flex;gap:6px;margin-bottom:22px;background:var(--card);padding:6px;border-radius:10px;border:1px solid var(--line);overflow-x:auto;}
-.tab{padding:9px 14px;border-radius:7px;cursor:pointer;font-size:11.5px;font-weight:600;white-space:nowrap;color:var(--ink-dim);border:none;background:none;font-family:'Space Grotesk',sans-serif;letter-spacing:0.3px;transition:all .15s;}
-.tab.active{background:var(--teal);color:#fff;}
-.tab:hover:not(.active){background:var(--teal-dim);color:var(--teal);}
-.tab-content{display:none;}
-.tab-content.active{display:block;animation:fade .2s ease;}
-@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-
-.subtabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
-.subtab{padding:7px 12px;border-radius:20px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;color:var(--ink-dim);border:1px solid var(--line);background:var(--card);font-family:'Space Grotesk',sans-serif;letter-spacing:0.2px;}
-.subtab.active{background:var(--teal);color:#fff;border-color:var(--teal);}
-.subtab:hover:not(.active){border-color:var(--teal);color:var(--teal);}
-.subtab-content{display:none;}
-.subtab-content.active{display:block;animation:fade .2s ease;}
-
-.vitals{display:flex;background:var(--ink);border-radius:12px;overflow-x:auto;margin-bottom:18px;}
-.vital{flex:1;min-width:150px;padding:16px 18px;position:relative;}
-.vital + .vital{border-left:1px dashed rgba(255,255,255,0.18);}
-.vital-label{font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:6px;}
-.vital-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;color:#fff;}
-.vital-value.teal{color:#5fd8c8;}
-.vital-value.coral{color:#f0968a;}
-.vital-value.amber{color:#e8bd77;}
-
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;}
-.grid3{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:16px;margin-bottom:18px;}
-@media(max-width:900px){.grid{grid-template-columns:1fr;}.grid3{grid-template-columns:1fr;}}
-
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px;}
-.card-title{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:var(--ink-dim);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;}
-
-.summary-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
-.summary-chip{flex:1;min-width:120px;background:var(--teal-dim);border-radius:9px;padding:12px 14px;}
-.summary-chip.coral{background:var(--coral-dim);}
-.summary-chip.amber{background:var(--amber-dim);}
-.summary-chip.blue{background:var(--blue-dim);}
-.summary-chip-label{font-size:10px;color:var(--ink-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;}
-.summary-chip-value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
-
-table{width:100%;border-collapse:collapse;font-size:12.5px;}
-th{text-align:left;padding:8px 10px;color:var(--ink-dim);font-weight:600;font-size:10.5px;letter-spacing:0.4px;text-transform:uppercase;border-bottom:1px solid var(--line);}
-td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle;}
-tr:hover td{background:var(--teal-dim);}
-.scroll-table{overflow-x:auto;max-height:520px;overflow-y:auto;}
-
-input,select,textarea{width:100%;background:#fbfcfb;border:1px solid var(--line);color:var(--ink);font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:9px 11px;border-radius:7px;outline:none;}
-input:focus,select:focus,textarea:focus{border-color:var(--teal);}
-label{display:block;font-size:10.5px;color:var(--ink-dim);letter-spacing:0.4px;text-transform:uppercase;margin:0 0 4px;font-weight:600;}
-.field{margin-bottom:10px;}
-.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-.field-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
-@media(max-width:600px){.field-row{grid-template-columns:1fr;}.field-row3{grid-template-columns:1fr;}}
-
-.badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:600;letter-spacing:0.3px;}
-.badge.cleared{background:var(--teal-dim);color:var(--teal);}
-.badge.overdue{background:var(--coral-dim);color:var(--coral);}
-.badge.pending{background:var(--amber-dim);color:var(--amber);}
-.badge.blue{background:var(--blue-dim);color:var(--blue);}
-
-.empty{text-align:center;padding:30px;color:var(--ink-dim);font-size:12.5px;}
-.loading{text-align:center;padding:40px;color:var(--ink-dim);font-size:12.5px;font-family:'IBM Plex Mono',monospace;}
-.loading::after{content:'...';animation:dots 1.4s infinite;}
-@keyframes dots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
-.error-msg{background:var(--coral-dim);border:1px solid var(--coral);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--coral);margin-bottom:14px;}
-.toast{position:fixed;bottom:22px;right:22px;background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transform:translateY(16px);transition:all .25s;z-index:999;}
-.toast.show{opacity:1;transform:translateY(0);}
-.section-note{font-size:11.5px;color:var(--ink-dim);line-height:1.6;margin-bottom:14px;}
-.swatch-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
-.swatch{width:34px;height:34px;border-radius:8px;cursor:pointer;border:2px solid transparent;}
-.swatch.selected{border-color:var(--ink);}
-
-/* Home command centre extras */
-.progress-outer{background:var(--line-soft);border-radius:20px;height:14px;overflow:hidden;margin:8px 0;}
-.progress-inner{height:100%;background:var(--teal);border-radius:20px;transition:width .4s;}
-.progress-inner.over{background:var(--coral);}
-.due-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:9px;margin-bottom:8px;background:var(--line-soft);gap:10px;}
-.due-item.overdue{background:var(--coral-dim);}
-.due-item.today{background:var(--amber-dim);}
-.due-left{font-size:12.5px;}
-.due-left b{display:block;}
-.due-left span{font-size:11px;color:var(--ink-dim);}
-.due-tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}
-.due-tag.overdue{background:var(--coral);color:#fff;}
-.due-tag.today{background:var(--amber);color:#fff;}
-.due-tag.soon{background:var(--blue);color:#fff;}
-.status-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
-@media(max-width:700px){.status-board{grid-template-columns:repeat(2,1fr);}}
-.status-cell{background:var(--line-soft);border-radius:9px;padding:12px;text-align:center;}
-.status-cell .num{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
-.status-cell .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);margin-top:3px;}
-.tip-box{background:linear-gradient(135deg,var(--ink),#1f352c);color:#fff;border-radius:12px;padding:18px;position:relative;overflow:hidden;}
-.tip-box .eyebrow{font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:#7fd9c9;margin-bottom:8px;}
-.tip-box .tip-text{font-size:14px;line-height:1.55;margin-bottom:10px;}
-.tip-box .tip-source{font-size:10.5px;color:rgba(255,255,255,0.55);}
-.tip-box button{margin-top:10px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;}
-.tip-box button:hover{background:rgba(255,255,255,0.2);}
-.activity-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12px;}
-.activity-icon{width:26px;height:26px;border-radius:7px;background:var(--teal-dim);color:var(--teal);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
-.bar-chart{display:flex;align-items:flex-end;gap:10px;height:140px;padding-top:10px;}
-.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
-.bar{width:100%;max-width:34px;background:var(--teal);border-radius:5px 5px 0 0;transition:height .3s;}
-.bar-label{font-size:9.5px;color:var(--ink-dim);margin-top:6px;}
-.bar-value{font-size:9px;color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;margin-bottom:3px;}
-.aging-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-.aging-label{width:70px;font-size:11px;color:var(--ink-dim);flex-shrink:0;}
-.aging-bar-outer{flex:1;background:var(--line-soft);border-radius:6px;height:16px;overflow:hidden;}
-.aging-bar-inner{height:100%;background:var(--teal);}
-.aging-bar-inner.warn{background:var(--amber);}
-.aging-bar-inner.danger{background:var(--coral);}
-.aging-value{width:80px;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
-details summary{list-style:none;}
-details summary::-webkit-details-marker{display:none;}
-
-/* v3.0: client health pipeline */
-.health-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}
-@media(max-width:700px){.health-board{grid-template-columns:repeat(2,1fr);}}
-.health-cell{border-radius:9px;padding:12px;text-align:center;background:var(--line-soft);}
-.health-cell.active{background:var(--teal-dim);}
-.health-cell.due{background:var(--amber-dim);}
-.health-cell.overdue{background:var(--coral-dim);}
-.health-cell.dormant{background:#e6e6e6;}
-.health-cell .num{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
-.health-cell .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);margin-top:3px;}
-.health-row{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:8px;margin-bottom:6px;background:var(--line-soft);font-size:12.5px;}
-.health-row .hr-label{font-weight:700;font-size:11px;white-space:nowrap;}
-
-/* v3.0: AI assistant */
-.chat-box{display:flex;flex-direction:column;height:360px;}
-.chat-log{flex:1;overflow-y:auto;background:var(--line-soft);border-radius:9px;padding:10px;margin-bottom:10px;}
-.chat-msg{margin-bottom:10px;font-size:12.5px;line-height:1.5;}
-.chat-msg.user{text-align:right;}
-.chat-msg .bubble{display:inline-block;padding:8px 12px;border-radius:10px;max-width:85%;text-align:left;}
-.chat-msg.user .bubble{background:var(--teal);color:#fff;}
-.chat-msg.assistant .bubble{background:#fff;border:1px solid var(--line);}
-.chat-input-row{display:flex;gap:8px;}
-.chat-input-row input{flex:1;}
-.chat-input-row button{flex-shrink:0;width:auto;padding:9px 16px;}
-
-/* v4.0: calendar */
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
-.cal-dow{text-align:center;font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);padding-bottom:4px;}
-.cal-cell{background:var(--line-soft);border-radius:8px;min-height:64px;padding:6px;font-size:11px;cursor:pointer;border:2px solid transparent;position:relative;}
-.cal-cell.empty{background:none;cursor:default;}
-.cal-cell.today{border-color:var(--teal);}
-.cal-cell.selected{border-color:var(--blue);background:var(--blue-dim);}
-.cal-cell .cal-daynum{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;}
-.cal-dot-row{display:flex;gap:3px;margin-top:4px;flex-wrap:wrap;}
-.cal-dot{width:6px;height:6px;border-radius:50%;}
-.cal-dot.overdue{background:var(--coral);}
-.cal-dot.appt{background:var(--blue);}
-.cal-dot.due{background:var(--amber);}
-.cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
-.cal-nav button{width:auto;padding:6px 12px;}
-.cal-month-label{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;}
-.agenda-item{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-radius:8px;margin-bottom:6px;background:var(--line-soft);font-size:12.5px;}
-.agenda-item .agenda-del{width:auto;padding:3px 8px;font-size:10px;}
-
-/* v4.0: setup catalog */
-.catalog-row-actions{display:flex;gap:6px;align-items:center;}
-.chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-.chip{background:var(--teal-dim);color:var(--teal);padding:5px 10px;border-radius:20px;font-size:11px;font-weight:600;}
-
-/* v4.1: footer branding */
-.byif-footer{text-align:center;padding:16px 0 4px;font-size:10.5px;color:var(--ink-dim);opacity:0.7;}
-.byif-footer a{color:inherit;text-decoration:none;}
-.byif-footer a:hover{color:var(--teal);text-decoration:underline;}
-</style>
-</head>
-<body>
-
-<div class="header">
-  <div class="brand">
-    <div class="brand-mark" id="brandMark">C</div>
-    <div>
-      <div class="brand-name" id="brandName">CORAZON</div>
-      <div class="brand-sub" id="brandSub">Command Centre</div>
-    </div>
-  </div>
-  <div class="header-right">
-    <div class="live-dot"></div>
-    <span class="last-refresh" id="lastRefresh">Loading...</span>
-    <button class="refresh-btn" onclick="loadData()">&#8635; Refresh</button>
-  </div>
-</div>
-
-<div class="main">
-  <div class="tabs">
-    <button class="tab active" onclick="switchTab('home',this)">Home</button>
-    <button class="tab" onclick="switchTab('followups',this)">Follow-Ups</button>
-    <button class="tab" onclick="switchTab('calendar',this)">Calendar</button>
-    <button class="tab" onclick="switchTab('tracker',this)">Tracker</button>
-    <button class="tab" onclick="switchTab('clienthealth',this)">Client Pipeline</button>
-    <button class="tab" onclick="switchTab('sales',this)">Daily Sales</button>
-    <button class="tab" onclick="switchTab('expenses',this)">Expenses</button>
-    <button class="tab" onclick="switchTab('debtcred',this)">Debtors &amp; Creditors</button>
-    <button class="tab" onclick="switchTab('clients',this)">Clients</button>
-    <button class="tab" onclick="switchTab('inventory',this)">Inventory</button>
-    <button class="tab" onclick="switchTab('purchases',this)">Purchases</button>
-    <button class="tab" onclick="switchTab('referrals',this)">Referrals</button>
-    <button class="tab" onclick="switchTab('callsmsgs',this)">Calls &amp; Messages</button>
-    <button class="tab" onclick="switchTab('archive',this)">Archive</button>
-    <button class="tab" onclick="switchTab('assistant',this)">AI Assistant</button>
-    <button class="tab" onclick="switchTab('setup',this)">Setup</button>
-  </div>
-
-  <!-- ============ HOME / SUMMARY ============ -->
-  <div class="tab-content active" id="tab-home">
-    <div class="vitals" id="vitalsStrip"><div class="vital"><div class="vital-label">Loading</div><div class="vital-value">···</div></div></div>
-
-    <div class="grid3">
-      <div class="card">
-        <div class="card-title">Revenue Target — this month</div>
-        <div id="revenueBlock"><div class="loading">Loading</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Due &amp; Overdue<span class="mono" id="followUpCountBadge"></span></div>
-        <div id="homeFollowUps"><div class="loading">Loading</div></div>
-      </div>
-      <div class="card tip-box" id="tipCard">
-        <div class="eyebrow">Today's Tip</div>
-        <div class="tip-text" id="tipText">Loading a tip for you...</div>
-        <div class="tip-source" id="tipSource"></div>
-        <button onclick="nextTip()">Next tip →</button>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Accounts Status Board</div>
-        <div class="status-board" id="statusBoard"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Client Reorder Pipeline<span class="mono" id="healthCountBadge"></span></div>
-        <div class="section-note">Auto-computed from real order dates — no manual tagging. See the Client Pipeline tab for the full list.</div>
-        <div class="health-board" id="homeHealthBoard"></div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Recent Sales</div>
-        <div id="homeRecentSales"><div class="loading">Loading</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Recent Activity — calls, messages &amp; sales</div>
-        <div id="homeActivity"><div class="loading">Loading</div></div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Quick — Log a Call</div>
-        <div class="field-row">
-          <div class="field"><label>Business / Client</label><input type="text" id="hcBusiness"></div>
-          <div class="field"><label>Number</label><input type="text" id="hcNumber"></div>
-        </div>
-        <div class="field"><label>Notes</label><input type="text" id="hcNotes" placeholder="What was discussed"></div>
-        <div class="field-row">
-          <div class="field"><label>Next Action</label><input type="text" id="hcNextAction" placeholder="e.g. Send quote"></div>
-          <div class="field"><label>Next Follow-Up Date</label><input type="date" id="hcNextFollowUp"></div>
-        </div>
-        <button class="refresh-btn" style="width:100%" onclick="quickLogCall()">+ Log Call</button>
-        <div id="hcResult" style="margin-top:6px;font-size:12px"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Quick — Log a Message</div>
-        <div class="field-row">
-          <div class="field"><label>Business / Client</label><input type="text" id="hmBusiness"></div>
-          <div class="field"><label>Channel</label><select id="hmChannel"><option>WhatsApp</option><option>SMS</option><option>Email</option><option>Call</option><option>In Person</option></select></div>
-        </div>
-        <div class="field"><label>Summary</label><input type="text" id="hmSummary" placeholder="What was the message about"></div>
-        <button class="refresh-btn" style="width:100%" onclick="quickLogMessage()">+ Log Message</button>
-        <div id="hmResult" style="margin-top:6px;font-size:12px"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ FOLLOW-UPS ============ -->
-  <div class="tab-content" id="tab-followups">
-    <div class="card">
-      <div class="card-title">Follow-Up Calendar</div>
-      <div class="section-note">Every debtor/creditor payment due within 3 days (or overdue), any call with a next follow-up date, any client whose reorder is overdue or dormant, and any scheduled appointment within 3 days — one combined list, nothing needs to be entered twice. See the Calendar tab to browse by date and add new appointments.</div>
-      <div id="followUpsFull"><div class="loading">Loading</div></div>
-    </div>
-  </div>
-
-  <!-- ============ CALENDAR — v4.0 ============ -->
-  <div class="tab-content" id="tab-calendar">
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Calendar</div>
-        <div class="cal-nav">
-          <button class="refresh-btn ghost small" onclick="calShiftMonth(-1)">&larr; Prev</button>
-          <div class="cal-month-label" id="calMonthLabel">—</div>
-          <button class="refresh-btn ghost small" onclick="calShiftMonth(1)">Next &rarr;</button>
-        </div>
-        <div class="cal-grid" id="calGrid"></div>
-        <div class="section-note" style="margin-top:10px">
-          <span class="cal-dot overdue" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Overdue/due follow-up
-          &nbsp;&nbsp;<span class="cal-dot appt" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Appointment
-          &nbsp;&nbsp;<span class="cal-dot due" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Reorder check-in
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Add an Appointment / Follow-Up</div>
-        <div class="field"><label>Title</label><input type="text" id="apptTitle" placeholder="e.g. Site visit — Nkwatia Hospital"></div>
-        <div class="field-row">
-          <div class="field"><label>Client / Business</label><input type="text" id="apptClient"></div>
-          <div class="field"><label>Date</label><input type="date" id="apptDate"></div>
-        </div>
-        <div class="field"><label>Notes</label><input type="text" id="apptNotes"></div>
-        <button class="refresh-btn" style="width:100%" onclick="submitAppointment()">+ Add to Calendar</button>
-        <div id="apptResult" style="margin-top:6px;font-size:12px"></div>
-        <div class="card-title" style="margin-top:18px">Agenda — selected day: <span id="agendaDayLabel">today</span></div>
-        <div id="agendaList"><div class="empty">Pick a day on the calendar</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ TRACKER — v4.0 with sheet-matched sub-tabs ============ -->
-  <div class="tab-content" id="tab-tracker">
-    <div class="subtabs">
-      <button class="subtab active" onclick="switchSubtab('tracker','overview',this)">Overview</button>
-      <button class="subtab" onclick="switchSubtab('tracker','dailyTotals',this)">Daily Totals</button>
-      <button class="subtab" onclick="switchSubtab('tracker','weeklySales',this)">Weekly Sales</button>
-      <button class="subtab" onclick="switchSubtab('tracker','monthlyRpt',this)">Monthly Report</button>
-      <button class="subtab" onclick="switchSubtab('tracker','annualSummary',this)">Annual Summary</button>
-      <button class="subtab" onclick="switchSubtab('tracker','stockAnalysis',this)">Stock Analysis</button>
-      <button class="subtab" onclick="switchSubtab('tracker','profitDash',this)">Profit Dash</button>
-      <button class="subtab" onclick="switchSubtab('tracker','purchasesView',this)">Purchases</button>
-    </div>
-
-    <div class="subtab-content active" id="tracker-overview">
-      <div class="grid">
-        <div class="card">
-          <div class="card-title">Revenue &amp; Profit — last 6 months</div>
-          <div id="trendChart"><div class="loading">Loading</div></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Top Clients by Revenue</div>
-          <div id="topClientsList"><div class="loading">Loading</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Debtor Aging — how old is money owed to you</div>
-        <div id="agingChart"><div class="loading">Loading</div></div>
-      </div>
-    </div>
-
-    <div class="subtab-content" id="tracker-dailyTotals">
-      <div class="card">
-        <div class="card-title">Daily Totals — from your DAILY_TOTALS sheet</div>
-        <div class="scroll-table"><table><thead id="dailyTotalsHead"></thead><tbody id="dailyTotalsBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-weeklySales">
-      <div class="card">
-        <div class="card-title">Weekly Sales — from your WEEKLY_SALES sheet</div>
-        <div class="scroll-table"><table><thead id="weeklySalesHead"></thead><tbody id="weeklySalesBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-monthlyRpt">
-      <div class="card">
-        <div class="card-title">Monthly Report — from your MONTHLY_RPT sheet</div>
-        <div class="scroll-table"><table><thead id="monthlyRptHead"></thead><tbody id="monthlyRptBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-annualSummary">
-      <div class="card">
-        <div class="card-title">Annual Summary — from your ANNUAL_SUMMARY sheet</div>
-        <div class="scroll-table"><table><thead id="annualSummaryHead"></thead><tbody id="annualSummaryBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-stockAnalysis">
-      <div class="card">
-        <div class="card-title">Stock Analysis — from your STOCK_ANALYSIS sheet</div>
-        <div class="scroll-table"><table><thead id="stockAnalysisHead"></thead><tbody id="stockAnalysisBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-profitDash">
-      <div class="card">
-        <div class="card-title">Profit Dashboard — from your PROFIT_DASH sheet</div>
-        <div id="profitDashBody"><div class="loading">Loading</div></div>
-      </div>
-    </div>
-    <div class="subtab-content" id="tracker-purchasesView">
-      <div class="card">
-        <div class="card-title">Purchases — from your PURCHASES sheet</div>
-        <div class="scroll-table"><table><thead id="purchasesViewHead"></thead><tbody id="purchasesViewBody"></tbody></table></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ CLIENT PIPELINE (reorder health) ============ -->
-  <div class="tab-content" id="tab-clienthealth">
-    <div class="card">
-      <div class="card-title">Reorder Health — every client, one glance</div>
-      <div class="section-note">CORAZON serves a small number of established clients rather than chasing cold leads, so instead of a manual prospecting pipeline, every client here is auto-labelled purely from real order dates in Daily Sales: 🟢 Active (ordered in the last 30 days) · 🟡 Due (31–60 days) · 🔴 Overdue (61–120 days) · ⚫ Dormant (120+ days). No tagging needed — it updates itself every time you log a sale.</div>
-      <div class="health-board" id="healthBoardFull"></div>
-    </div>
-    <div class="card">
-      <div class="card-title">All Clients by Days Since Last Order</div>
-      <div class="scroll-table"><table><thead><tr><th>Client</th><th>Status</th><th>Last Order</th><th>Days Since</th><th>Total Revenue</th></tr></thead><tbody id="healthTableBody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- ============ DAILY SALES — v4.0 payment method + tax dropdown + notes ============ -->
-  <div class="tab-content" id="tab-sales">
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Log a Sale</div>
-        <div class="section-note">Fill in date, customer, stock code and quantity — product name, price, cost, revenue and tax amount auto-fill from your SETUP catalog exactly like they do when you type it in by hand.</div>
-        <div class="field-row">
-          <div class="field"><label>Date</label><input type="date" id="saleDate"></div>
-          <div class="field"><label>Customer Name</label><input type="text" id="saleCustomer" placeholder="e.g. Nkwatia Hospital"></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Stock Code</label><input type="text" id="saleStockCode" placeholder="e.g. HB 1"></div>
-          <div class="field"><label>Qty Sold</label><input type="number" id="saleQty" placeholder="e.g. 10"></div>
-        </div>
-        <div class="field-row3">
-          <div class="field"><label>Discount % (optional)</label><input type="text" id="saleDiscount" placeholder="e.g. 5"></div>
-          <div class="field"><label>Tax Rate</label><select id="saleTax"><option value="">Use default</option></select></div>
-          <div class="field"><label>Payment Method</label><select id="salePaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option><option>Bank Transfer</option></select></div>
-        </div>
-        <div class="field"><label>Notes</label><input type="text" id="saleNotes" placeholder="client name / invoice ref"></div>
-        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitSale()">+ Log Sale</button>
-        <div id="saleResult" style="margin-top:8px;font-size:12px"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Today &amp; All-Time</div>
-        <div class="summary-row" id="salesSummaryChips"></div>
-        <div class="section-note">Showing the most recent 500 entries below. Full history stays in the DAILY_SALES sheet. Use the Archive tab to sweep entries older than 12 months into ARCHIVE_SALES if the sheet starts feeling slow.</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Recent Entries</div>
-      <div class="scroll-table"><table><thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Gross Profit</th><th>Payment</th></tr></thead><tbody id="salesTableBody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- ============ EXPENSES ============ -->
-  <div class="tab-content" id="tab-expenses">
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Log an Expense</div>
-        <div id="expenseFormFields"></div>
-        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('expenses','addExpense')">+ Log Expense</button>
-        <div id="expensesResult" style="margin-top:8px;font-size:12px"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">About this tab</div>
-        <div class="section-note">This form is built automatically from your EXPENSES sheet's actual column headers, so it always matches what's really there. If a field is missing or in the wrong order, tell me the exact header text and I'll fix the mapping.</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Recent Expenses</div>
-      <div class="scroll-table"><table><thead id="expensesTableHead"></thead><tbody id="expensesTableBody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- ============ DEBTORS & CREDITORS ============ -->
-  <div class="tab-content" id="tab-debtcred">
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Debtors — owed TO you</div>
-        <div class="summary-row" id="debtorsSummaryChips"></div>
-        <details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--teal);font-weight:600">+ Add a debtor</summary>
-          <div style="margin-top:10px">
-            <div class="field-row">
-              <div class="field"><label>Client Name</label><input type="text" id="debtorName"></div>
-              <div class="field"><label>Contact</label><input type="text" id="debtorContact"></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label>Amount Owed (GHS)</label><input type="number" id="debtorAmountOwed"></div>
-              <div class="field"><label>Amount Paid (GHS)</label><input type="number" id="debtorAmountPaid" value="0"></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label>Invoice Date</label><input type="date" id="debtorInvoiceDate"></div>
-              <div class="field"><label>Due Date</label><input type="date" id="debtorDueDate"></div>
-            </div>
-            <div class="field"><label>Payment Method</label><select id="debtorPaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option></select></div>
-            <div class="field"><label>Notes</label><input type="text" id="debtorNotes"></div>
-            <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('debtor')">+ Add Debtor</button>
-            <div id="debtorResult" style="margin-top:6px;font-size:12px"></div>
-          </div>
-        </details>
-        <div class="scroll-table"><table><thead><tr><th>Name</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody id="debtorsTableBody"></tbody></table></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Creditors — you OWE to suppliers</div>
-        <div class="summary-row" id="creditorsSummaryChips"></div>
-        <details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--teal);font-weight:600">+ Add a creditor</summary>
-          <div style="margin-top:10px">
-            <div class="field-row">
-              <div class="field"><label>Supplier / Vendor</label><input type="text" id="creditorName"></div>
-              <div class="field"><label>Contact</label><input type="text" id="creditorContact"></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label>Amount Owed (GHS)</label><input type="number" id="creditorAmountOwed"></div>
-              <div class="field"><label>Amount Paid (GHS)</label><input type="number" id="creditorAmountPaid" value="0"></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label>Invoice Date</label><input type="date" id="creditorInvoiceDate"></div>
-              <div class="field"><label>Due Date</label><input type="date" id="creditorDueDate"></div>
-            </div>
-            <div class="field"><label>Payment Method</label><select id="creditorPaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option></select></div>
-            <div class="field"><label>Notes</label><input type="text" id="creditorNotes"></div>
-            <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('creditor')">+ Add Creditor</button>
-            <div id="creditorResult" style="margin-top:6px;font-size:12px"></div>
-          </div>
-        </details>
-        <div class="scroll-table"><table><thead><tr><th>Name</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody id="creditorsTableBody"></tbody></table></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Keep this table fast — archive cleared accounts</div>
-      <div class="section-note">Cleared entries (balance = GHS 0) can pile up over time and slow the sheet down. Sweep them into the Archive tab in one click — nothing is deleted, you can always restore from there.</div>
-      <button class="refresh-btn ghost" onclick="sweepArchive()">Sweep all cleared accounts to Archive</button>
-      <div id="sweepResult" style="margin-top:8px;font-size:12px"></div>
-    </div>
-  </div>
-
-  <!-- ============ CLIENTS ============ -->
-  <div class="tab-content" id="tab-clients">
-    <div class="grid">
-      <div class="card"><div class="card-title">Add a Client</div><div id="clientsFormFields"></div>
-        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('clients','addClient')">+ Add Client</button>
-        <div id="clientsResult" style="margin-top:8px;font-size:12px"></div>
-      </div>
-      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your CLIENTS sheet headers automatically. For each client's live reorder status, see the Client Pipeline tab.</div></div>
-    </div>
-    <div class="card"><div class="card-title">All Clients</div><div class="scroll-table"><table><thead id="clientsTableHead"></thead><tbody id="clientsTableBody"></tbody></table></div></div>
-  </div>
-
-  <!-- ============ INVENTORY ============ -->
-  <div class="tab-content" id="tab-inventory">
-    <div class="card"><div class="card-title">Inventory (read-only view)</div>
-      <div class="section-note">Inventory is managed from your SETUP/PURCHASES formulas — this is a live read-only view. Search below.</div>
-      <input type="text" id="inventorySearch" placeholder="Search stock code or product name..." oninput="renderInventory()" style="margin-bottom:12px">
-      <div class="scroll-table"><table><thead id="inventoryTableHead"></thead><tbody id="inventoryTableBody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- ============ PURCHASES ============ -->
-  <div class="tab-content" id="tab-purchases">
-    <div class="grid">
-      <div class="card"><div class="card-title">Log a Purchase</div><div id="purchasesFormFields"></div>
-        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('purchases','addPurchase')">+ Log Purchase</button>
-        <div id="purchasesResult" style="margin-top:8px;font-size:12px"></div>
-      </div>
-      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your PURCHASES sheet headers automatically — this is where supplier price changes (e.g. from dollar fluctuations) get logged going forward without touching past sales. To update a product's cost so future sales use the new price (while past sales keep the old one), use Setup → Product Catalog → Update Cost.</div></div>
-    </div>
-    <div class="card"><div class="card-title">Recent Purchases</div><div class="scroll-table"><table><thead id="purchasesTableHead"></thead><tbody id="purchasesTableBody"></tbody></table></div></div>
-  </div>
-
-  <!-- ============ REFERRALS ============ -->
-  <div class="tab-content" id="tab-referrals">
-    <div class="grid">
-      <div class="card"><div class="card-title">Log a Referral</div><div id="referralsFormFields"></div>
-        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('referrals','addReferral')">+ Add Referral</button>
-        <div id="referralsResult" style="margin-top:8px;font-size:12px"></div>
-      </div>
-      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Tracks who referred a client and how many times, per your REFERRALS sheet. See the golden-window rule in the Home tip box: ask 24–72 hours after a client confirms satisfaction, not before, not weeks later.</div></div>
-    </div>
-    <div class="card"><div class="card-title">All Referrals</div><div class="scroll-table"><table><thead id="referralsTableHead"></thead><tbody id="referralsTableBody"></tbody></table></div></div>
-  </div>
-
-  <!-- ============ CALLS & MESSAGES ============ -->
-  <div class="tab-content" id="tab-callsmsgs">
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Log a Call</div>
-        <div class="field-row">
-          <div class="field"><label>Business / Client</label><input type="text" id="callBusiness"></div>
-          <div class="field"><label>Number</label><input type="text" id="callNumber"></div>
-        </div>
-        <div class="field"><label>Notes</label><input type="text" id="callNotes"></div>
-        <div class="field-row">
-          <div class="field"><label>Next Action</label><input type="text" id="callNextAction"></div>
-          <div class="field"><label>Next Follow-Up Date</label><input type="date" id="callNextFollowUp"></div>
-        </div>
-        <button class="refresh-btn" style="width:100%" onclick="submitCall()">+ Log Call</button>
-        <div id="callResult" style="margin-top:6px;font-size:12px"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Log a Message</div>
-        <div class="field-row">
-          <div class="field"><label>Business / Client</label><input type="text" id="msgBusiness"></div>
-          <div class="field"><label>Channel</label><select id="msgChannel"><option>WhatsApp</option><option>SMS</option><option>Email</option><option>In Person</option></select></div>
-        </div>
-        <div class="field"><label>Summary</label><input type="text" id="msgSummary"></div>
-        <button class="refresh-btn" style="width:100%" onclick="submitMessage()">+ Log Message</button>
-        <div id="msgResult" style="margin-top:6px;font-size:12px"></div>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="card"><div class="card-title">Recent Calls</div><div class="scroll-table"><table><thead><tr><th>Date</th><th>Business</th><th>Number</th><th>Notes</th><th>Next Action</th><th>Follow Up</th></tr></thead><tbody id="callsTableBody"></tbody></table></div></div>
-      <div class="card"><div class="card-title">Recent Messages</div><div class="scroll-table"><table><thead><tr><th>Date</th><th>Business</th><th>Channel</th><th>Summary</th></tr></thead><tbody id="messagesTableBody"></tbody></table></div></div>
-    </div>
-  </div>
-
-  <!-- ============ ARCHIVE ============ -->
-  <div class="tab-content" id="tab-archive">
-    <div class="card">
-      <div class="card-title">Archived Debtors &amp; Creditors<span class="mono" id="archiveCountBadge"></span></div>
-      <div class="section-note">Cleared accounts live here once swept from the live Debtors &amp; Creditors table. Nothing is deleted — restore any entry back to the live table if needed.</div>
-      <input type="text" id="archiveSearch" placeholder="Search archived name..." oninput="renderArchiveFiltered()" style="margin-bottom:12px">
-      <div class="scroll-table"><table><thead><tr><th>Archived</th><th>Type</th><th>Name</th><th>Owed</th><th>Paid</th><th>Reason</th><th></th></tr></thead><tbody id="archiveTableBody"></tbody></table></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Archived Sales<span class="mono" id="archiveSalesCountBadge"></span></div>
-      <div class="section-note">Old Daily Sales rows, once swept, live here so the live sales table stays fast. Nothing is deleted — restore any row back to the end of Daily Sales.</div>
-      <div class="field-row" style="align-items:end">
-        <div class="field"><label>Sweep sales older than (months)</label><input type="number" id="sweepSalesMonths" value="12"></div>
-        <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="sweepArchiveSales()">Sweep old sales to Archive</button></div>
-      </div>
-      <div id="sweepSalesResult" style="margin-bottom:10px;font-size:12px"></div>
-      <div class="scroll-table"><table><thead><tr><th>Archived</th><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th></th></tr></thead><tbody id="archiveSalesTableBody"></tbody></table></div>
-    </div>
-  </div>
-
-  <!-- ============ AI ASSISTANT ============ -->
-  <div class="tab-content" id="tab-assistant">
-    <div class="card">
-      <div class="card-title">CORAZON Assistant</div>
-      <div class="section-note">Ask about revenue pace, which clients to chase, how to word a follow-up or a referral ask, or anything else about running the business. It sees your live revenue, follow-up and client-health numbers when you ask. Requires an <code>ANTHROPIC_API_KEY</code> set in Apps Script Script Properties — see the Setup tab for the one-time step.</div>
-      <div class="chat-box">
-        <div class="chat-log" id="chatLog"></div>
-        <div class="chat-input-row">
-          <input type="text" id="chatInput" placeholder="e.g. Which clients should I follow up with today?" onkeydown="if(event.key==='Enter') sendChat()">
-          <button class="refresh-btn" onclick="sendChat()" id="chatSendBtn">Send</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ SETUP — v4.0 catalog / categories / units / targets ============ -->
-  <div class="tab-content" id="tab-setup">
-    <div class="card">
-      <div class="card-title">Business Identity</div>
-      <div class="section-note">This only controls how the dashboard displays itself — it does not touch your existing SETUP tab (product catalog, tax codes, etc).</div>
-      <div class="field-row">
-        <div class="field"><label>Business Name</label><input type="text" id="setupBusinessName"></div>
-        <div class="field"><label>Industry</label><input type="text" id="setupIndustry"></div>
-      </div>
-      <label>Theme</label>
-      <div class="swatch-row" id="themeSwatches"></div>
-      <div class="field" style="margin-top:14px">
-        <label>Branding</label>
-        <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;font-size:12.5px;color:var(--ink)">
-          <input type="checkbox" id="setupBrandingEnabled" style="width:auto">
-          Show "Powered by BYINFORGH" footer on the dashboard
-        </label>
-      </div>
-      <button class="refresh-btn" style="margin-top:14px" onclick="saveSetup()">Save Settings</button>
-      <div id="setupResult" style="margin-top:8px;font-size:12px"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Revenue Targets &amp; Expense Budgets</div>
-      <div class="section-note">Mirrors the 50/30/20 targets in SETUP Section 2 of your sheet — set here and the Home / Tracker pace numbers use them immediately.</div>
-      <div class="field-row3">
-        <div class="field"><label>Daily Revenue Target (GHS)</label><input type="number" id="targetDaily"></div>
-        <div class="field"><label>Weekly Revenue Target (GHS)</label><input type="number" id="targetWeekly"></div>
-        <div class="field"><label>Monthly Revenue Target (GHS)</label><input type="number" id="targetMonthly"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>Annual Revenue Target (GHS)</label><input type="number" id="targetAnnual"></div>
-        <div class="field"><label>Working Days / Month</label><input type="number" id="setupWorkingDays"></div>
-      </div>
-      <div class="field-row3">
-        <div class="field"><label>Daily Expense Budget (GHS)</label><input type="number" id="budgetDaily"></div>
-        <div class="field"><label>Weekly Expense Budget (GHS)</label><input type="number" id="budgetWeekly"></div>
-        <div class="field"><label>Monthly Expense Budget (GHS)</label><input type="number" id="budgetMonthly"></div>
-      </div>
-      <div class="field"><label>Annual Expense Budget (GHS)</label><input type="number" id="budgetAnnual"></div>
-      <button class="refresh-btn" onclick="saveTargets()">Save Targets &amp; Budgets</button>
-      <div id="targetsResult" style="margin-top:8px;font-size:12px"></div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Product Catalog — add a new product</div>
-        <div class="section-note">Adds a row to SETUP Section 3, same fields the sheet itself uses. Stock Code must be unique and is used across every other sheet.</div>
-        <div class="field-row">
-          <div class="field"><label>Stock Code</label><input type="text" id="catStockCode" placeholder="e.g. HB 2"></div>
-          <div class="field"><label>Product Name</label><input type="text" id="catName"></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Category</label><select id="catCategory"></select></div>
-          <div class="field"><label>Unit</label><select id="catUnit"></select></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Reorder Level</label><input type="number" id="catReorder"></div>
-          <div class="field"><label>Supplier</label><input type="text" id="catSupplier"></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Unit Cost (GHS)</label><input type="number" id="catUnitCost"></div>
-          <div class="field"><label>Retail Price (GHS)</label><input type="number" id="catRetailPrice"></div>
-        </div>
-        <div class="field"><label>Track Expiry?</label><select id="catTrackExpiry"><option value="">—</option><option>Yes</option><option>No</option></select></div>
-        <button class="refresh-btn" style="width:100%" onclick="submitCatalogProduct()">+ Add Product</button>
-        <div id="catalogResult" style="margin-top:8px;font-size:12px"></div>
-
-        <div class="card-title" style="margin-top:18px">Categories</div>
-        <div class="field-row">
-          <div class="field" style="flex:1"><input type="text" id="newCategoryInput" placeholder="Add a new category"></div>
-          <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="submitNewCategory()">+ Add</button></div>
-        </div>
-        <div class="chip-list" id="categoryChips"></div>
-
-        <div class="card-title" style="margin-top:18px">Units</div>
-        <div class="field-row">
-          <div class="field" style="flex:1"><input type="text" id="newUnitInput" placeholder="Add a new unit (e.g. Sachet)"></div>
-          <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="submitNewUnit()">+ Add</button></div>
-        </div>
-        <div class="chip-list" id="unitChips"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Product Catalog — cost tracking</div>
-        <div class="section-note">Supplier price changed (e.g. dollar rate)? Update the cost here — the dashboard automatically moves the current Unit Cost into Previous Unit Cost and stamps today's date into Price Changed Date, exactly like the manual process in your SETUP note. Past sales keep their own recorded cost automatically.</div>
-        <div class="scroll-table"><table><thead><tr><th>Code</th><th>Product</th><th>Unit Cost</th><th>Previous</th><th>Changed</th><th></th></tr></thead><tbody id="catalogTableBody"></tbody></table></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">AI Assistant Setup (one-time)</div>
-      <div class="section-note">
-        1. Open the spreadsheet → Extensions → Apps Script.<br>
-        2. Project Settings (gear icon) → Script Properties → Add script property.<br>
-        3. Property: <code>ANTHROPIC_API_KEY</code> — Value: your Anthropic API key. Save.<br>
-        4. Reload this dashboard. The AI Assistant tab will start working immediately, no redeploy needed.
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="byif-footer" id="byifFooter" style="display:none">
-  <a href="https://wa.me/233509960980" target="_blank" rel="noopener noreferrer">Powered by BYINFORGH — Business Solutions</a> · © 2026
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-// ==========================================================
-// CONFIG — paste your Apps Script /exec deployment URL here
-// ==========================================================
-const API_URL = "https://script.google.com/macros/s/AKfycbzjJWbIOt1ulvcEG0jFXHL_jYkkoPzvqdMGggYzpKCgVqjN6EyFvWvSS_EWoFOvIWEH/exec";
-
-const THEMES = [
-  { name:'Clinical Teal',  primary:'#0d6e63', secondary:'#2f6fa3', alert:'#b3402f' },
-  { name:'Ocean Blue',     primary:'#2f6fa3', secondary:'#0d6e63', alert:'#c1493a' },
-  { name:'Amber Warmth',   primary:'#a97328', secondary:'#0d6e63', alert:'#b3402f' },
-  { name:'Rose Care',      primary:'#a3455a', secondary:'#2f6fa3', alert:'#a97328' },
-  { name:'Slate Trust',    primary:'#3d5a6c', secondary:'#0d6e63', alert:'#b3402f' }
+// v4.2: any action in this list touches the sheet, so it gets a script
+// lock (so concurrent writes can't collide) and clears the getData()
+// cache on success (so the change shows up immediately on next refresh).
+var WRITE_ACTIONS = [
+  'saveSettings', 'addSale', 'addExpense', 'addDebtor', 'addCreditor',
+  'markCleared', 'addClient', 'addPurchase', 'addReferral', 'addGenericRow',
+  'logCall', 'logMessage', 'archiveDC', 'sweepArchiveDC', 'restoreDC',
+  'sweepArchiveSales', 'restoreArchiveSale', 'addSetupProduct',
+  'updateSetupCost', 'addSetupCategory', 'addUnit', 'logAppointment',
+  'deleteAppointment'
 ];
 
-const TIPS = [
-  { text: "Give value before you ask for anything. When you message a hospital about a re-order, lead with something useful — a stock tip, a delivery update — before mentioning price.", source: "Sales Playbook — The One Rule" },
-  { text: "Sort every contact into Cold, Warm, or Re-engage before messaging. A warm contact (spoken before) should never get a cold-opener question.", source: "Sales Playbook — Sort Your Contacts" },
-  { text: "The golden window for asking a happy customer for a referral is 24–72 hours after they confirm they're satisfied. Wait longer and the ask loses its power.", source: "Referral & Retention System" },
-  { text: "State your price once, calmly, then stay quiet. The first person to speak after the price is stated usually loses the negotiation.", source: "Sales Playbook — The Price Conversation" },
-  { text: "Complete every field in your WhatsApp Business profile — name, category, description, hours, location pin. An incomplete profile reads as a scam risk to a cautious buyer.", source: "WhatsApp Business Operating System" },
-  { text: "80% of sales need 5 or more follow-ups. Most businesses give up after one message — every follow-up should bring something new: a fact, a result, a question.", source: "WhatsApp Business OS — The Follow-Up System" },
-  { text: "48 hours after any delivery, send a quick satisfaction check. It catches problems early and opens the golden window for a referral ask.", source: "Referral & Retention System" },
-  { text: "A customer who bought once is 60–70% more likely to buy again vs a 5–20% chance with someone new. Retention is cheaper than acquisition — check in on quiet clients before chasing new ones.", source: "Referral & Retention System" },
-  { text: "Label every client by loyalty tier: One-Time, Repeat, Loyal, Spotlight. Your Spotlight clients deserve priority service and first access to new stock.", source: "Referral & Retention System" },
-  { text: "'I will think about it' is usually genuine, not a no. Re-enter in 5–7 days with something new rather than repeating your last message.", source: "Sales Playbook — Objection Handling" },
-  { text: "Voice notes feel more personal than long text in Ghana. Use one for a warm re-engagement to a hospital contact who's gone quiet.", source: "Sales Playbook — The 8 Behaviour Rules" },
-  { text: "Never re-open a cold conversation just to ask for a referral or repeat an old offer. Bring a new angle — a result, a fact, a season, or a genuine check-in.", source: "Sales Playbook / Referral System" },
-  { text: "Reply to a new enquiry within 30 minutes during business hours where you can. The first response is the most important one — interest fades fast.", source: "WhatsApp Business OS — Chapter 11" },
-  { text: "Track every referral immediately: who sent them, when, what they need. A referral treated like a stranger is a wasted referral.", source: "Referral & Retention System" },
-  { text: "Set up your WhatsApp Away Message so no enquiry from a clinic or hospital ever sits unanswered overnight.", source: "WhatsApp Business OS — Chapter 10" },
-  { text: "Acknowledge a referral's success immediately — thank the referrer the moment their contact buys. Delayed thanks feels like an afterthought.", source: "Referral & Retention System" },
-  { text: "Update your product catalogue regularly. A stale catalogue costs enquiries — every update is also a reason to message your customer list.", source: "WhatsApp Business OS — Chapter 3" },
-  { text: "When a client goes quiet for 30–60 days, re-enter with something specific: a new product that made you think of them, not a generic 'checking in'.", source: "WhatsApp Business OS — Chapter 12" },
-  { text: "Name their specific need when reaching out — a generic message reads like a template. Specificity signals you're paying attention.", source: "Sales Playbook — The 8 Behaviour Rules" },
-  { text: "One sale a day, compounded, adds up fast. Consistency beats intensity — show up in the dashboard every day rather than in bursts.", source: "WhatsApp Business OS — The Operating System" },
-  { text: "Your phone goes down the moment a customer walks in or calls. A customer who feels ignored for even a few seconds decides how the rest of the relationship will feel.", source: "Customer Service Guide — Your Presence" },
-  { text: "Every customer gets a greeting within seconds — eye contact, a smile, a simple 'how can I help?'. It costs nothing and it's the difference between a customer who stays and one who leaves.", source: "Customer Service Guide — The Greeting" },
-  { text: "Never guess a price or say 'I don't know' about your own stock. If you're not sure, say 'let me find out right now' — and then actually find out.", source: "Customer Service Guide — Know Your Products" },
-  { text: "A WhatsApp message left on two ticks with no reply, while you're clearly online, is one of the fastest ways to destroy trust before a client has even met you.", source: "Customer Service Guide — WhatsApp Communication" },
-  { text: "When a client brings back a problem, lead with 'let me look into this for you' — never 'it was fine when we sold it'. Investigate before you conclude, even if you're sure they're wrong.", source: "Customer Service Guide — Handling Difficult Situations" },
-  { text: "Reputation is built one interaction at a time — consistent good service, following through on what you said you'd do, and treating every client the same whether the order is big or small.", source: "Customer Service Guide — Building Your Reputation" },
-  { text: "If you don't have what a client needs, never leave it at 'we don't have it'. Suggest an alternative, give a date it's back in stock, or offer to contact them when it arrives.", source: "Customer Service Guide — Handling Difficult Situations" },
-  { text: "Sort clients into loyalty tiers — One-Time, Repeat, Loyal, Spotlight — and treat each differently. Your Spotlight clients should hear from you before they ever have to chase you.", source: "Referral & Retention System — Loyalty Tiers" },
-  { text: "A client who goes quiet almost never chose a competitor — they just got busy and stopped being contacted. Re-enter with something new, never with 'just checking in'.", source: "Referral & Retention System — Re-Activation" },
-  { text: "When negotiating price, don't reduce the number — offer a smaller entry point instead. 'Let's start with the smaller order so you can see the value first' protects your price and still moves things forward.", source: "Sales Playbook — The Price Conversation" }
-];
-
-let state = { settings:{}, dailySales:{rows:[]}, debtorsCreditors:{}, expenses:{rows:[]}, clients:{rows:[]}, inventory:{rows:[]}, purchases:{rows:[]}, referrals:{rows:[]}, revenue:{}, followUps:{items:[]}, tracker:{}, callsMessages:{calls:[],messages:[]}, archive:{rows:[]}, archiveSales:{rows:[]}, clientHealth:{rows:[],counts:{}}, taxCodes:[], setupCatalog:{headers:[],rows:[]}, setupCategories:[], units:[], appointments:[], profitDash:{rows:[]}, dailyTotals:{headers:[],rows:[]}, weeklySales:{headers:[],rows:[]}, monthlyRpt:{headers:[],rows:[]}, annualSummary:{headers:[],rows:[]}, stockAnalysis:{headers:[],rows:[]} };
-let tipIndex = (function(){ const d = new Date(); const dayOfYear = Math.floor((d - new Date(d.getFullYear(),0,0))/86400000); return dayOfYear % TIPS.length; })();
-let chatHistory = [];
-let calViewDate = new Date();
-let calSelectedDate = new Date();
-
-function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
-function switchTab(name, btn){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('tab-'+name).classList.add('active');
-  if(name==='calendar'){ renderCalendar(); renderAgenda(); }
-}
-function switchSubtab(group, name, btn){
-  const container = btn.closest('.tab-content');
-  container.querySelectorAll('.subtab').forEach(t=>t.classList.remove('active'));
-  container.querySelectorAll('.subtab-content').forEach(t=>t.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById(group+'-'+name).classList.add('active');
-}
-function fmtMoney(v){ v = parseFloat(v)||0; return 'GHS ' + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function fmtMoneyShort(v){ v = parseFloat(v)||0; return 'GHS ' + Math.round(v).toLocaleString(); }
-
-function renderTip(){
-  const tip = TIPS[tipIndex % TIPS.length];
-  document.getElementById('tipText').textContent = tip.text;
-  document.getElementById('tipSource').textContent = tip.source;
-}
-function nextTip(){ tipIndex++; renderTip(); }
-
-// v4.4: render calls are isolated so one bad render never blocks the rest.
-function safeRender(fn, label){
-  try{ fn(); }
-  catch(e){ console.log('Render error in ' + label + ':', e); }
+// =====================
+// v4.4: REQUEST-SCOPED MEMOIZATION
+// =====================
+// Apps Script can keep a script instance "warm" between separate web app
+// invocations, so a plain global variable can leak stale data from one
+// request into the next if we're not careful. resetReqCache() is called
+// at the very top of every doGet(), so every request starts with a clean
+// cache — memoization only ever helps *within* a single request, never
+// across requests.
+var __reqCache = null;
+function resetReqCache() { __reqCache = {}; }
+function reqCache() {
+  if (!__reqCache) __reqCache = {};
+  return __reqCache;
 }
 
-// v4.4: signal-free timeout helper. We intentionally do NOT use
-// AbortController/AbortSignal here — in this dashboard's preview/sandbox
-// host, fetch calls get instrumented and their arguments passed through
-// postMessage for logging, and AbortSignal is not structured-cloneable.
-// That throws: "DataCloneError: Failed to execute 'postMessage' on
-// 'Window': AbortSignal object could not be cloned." Promise.race gives
-// the same practical result (the UI stops waiting and shows an error)
-// without ever constructing a signal object.
-function fetchWithTimeout(url, ms){
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if(settled) return;
-      settled = true;
-      reject(new Error('timeout'));
-    }, ms);
-    fetch(url).then(res => {
-      if(settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(res);
-    }).catch(err => {
-      if(settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
+function getMainSS() {
+  var c = reqCache();
+  if (!c.ss) c.ss = SpreadsheetApp.openById(SHEET_ID);
+  return c.ss;
 }
 
-async function loadData(){
-  document.getElementById('lastRefresh').textContent = 'Refreshing...';
-  if(API_URL.indexOf('PASTE_YOUR') === 0){
-    document.getElementById('lastRefresh').textContent = 'Not connected — paste your Apps Script URL into API_URL';
-    renderTip();
-    return;
-  }
-  try{
-    // v4.4: hard timeout so a slow/stuck connection can never leave the
-    // dashboard stuck on "Refreshing..." forever — it now fails visibly
-    // after 20s instead of hanging indefinitely.
-    const res = await fetchWithTimeout(API_URL + '?t=' + Date.now(), 20000);
-    const data = await res.json();
-    state = Object.assign(state, data);
-
-    // v4.4: each renderer runs in its own try/catch. Previously all of
-    // these sat inside one shared try/catch in loadData() — if any single
-    // one threw (e.g. malformed data in one sheet), every renderer after
-    // it in this list silently never ran, which is why some tabs looked
-    // "stuck" or blank even though the fetch itself succeeded.
-    safeRender(applySettings, 'applySettings');
-    safeRender(renderHome, 'renderHome');
-    safeRender(renderFollowUpsFull, 'renderFollowUpsFull');
-    safeRender(renderTracker, 'renderTracker');
-    safeRender(renderSales, 'renderSales');
-    safeRender(renderExpenses, 'renderExpenses');
-    safeRender(renderDebtorsCreditors, 'renderDebtorsCreditors');
-    safeRender(renderClients, 'renderClients');
-    safeRender(renderInventory, 'renderInventory');
-    safeRender(renderPurchases, 'renderPurchases');
-    safeRender(renderReferrals, 'renderReferrals');
-    safeRender(renderCallsMessages, 'renderCallsMessages');
-    safeRender(renderArchive, 'renderArchive');
-    safeRender(renderArchiveSales, 'renderArchiveSales');
-    safeRender(renderClientHealth, 'renderClientHealth');
-    safeRender(renderTaxDropdown, 'renderTaxDropdown');
-    safeRender(renderCatalogFormOptions, 'renderCatalogFormOptions');
-    safeRender(renderCatalogTable, 'renderCatalogTable');
-    safeRender(renderCategoryChips, 'renderCategoryChips');
-    safeRender(renderUnitChips, 'renderUnitChips');
-    safeRender(renderTargets, 'renderTargets');
-    safeRender(renderCalendar, 'renderCalendar');
-    safeRender(renderAgenda, 'renderAgenda');
-    safeRender(renderTip, 'renderTip');
-
-    document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
-  }catch(e){
-    if(e && e.message === 'timeout'){
-      document.getElementById('lastRefresh').textContent = 'Timed out — tap Refresh to try again';
-    } else {
-      document.getElementById('lastRefresh').textContent = 'Offline — check connection';
+// =====================
+// ROUTING
+// =====================
+function doGet(e) {
+  resetReqCache(); // v4.4: fresh memoization cache for this request only
+  var action = e && e.parameter && e.parameter.action ? e.parameter.action : 'getData';
+  var isWrite = WRITE_ACTIONS.indexOf(action) !== -1;
+  var lock = null;
+  try {
+    if (isWrite) {
+      lock = LockService.getScriptLock();
+      var gotLock = lock.tryLock(10000); // wait up to 10s for another save to finish
+      if (!gotLock) {
+        return jsonResponse({ error: 'System is busy saving another change — please wait a moment and try again.' });
+      }
     }
-    console.log('Load error', e);
+    var response = routeAction(action, e);
+    if (isWrite) {
+      try { CacheService.getScriptCache().remove(DATA_CACHE_KEY); } catch (ce) { /* cache not critical */ }
+    }
+    return response;
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (re) { /* ignore */ } }
   }
 }
 
-function applySettings(){
-  const s = state.settings || {};
-  document.getElementById('brandName').textContent = s.business_name || 'CORAZON';
-  document.getElementById('brandMark').textContent = (s.business_name||'C').charAt(0).toUpperCase();
-  document.getElementById('brandSub').textContent = s.industry || 'Command Centre';
-  if(s.primary_color){
-    document.documentElement.style.setProperty('--teal', s.primary_color);
-    document.documentElement.style.setProperty('--teal-dim', s.primary_color + '1a');
+function routeAction(action, e) {
+  if (action === 'getData')           return jsonResponse(getData());
+  if (action === 'getSettings')       return jsonResponse(getSettings());
+  if (action === 'saveSettings')      return saveSettingsGET(e);
+  if (action === 'addSale')           return addSaleGET(e);
+  if (action === 'addExpense')        return addGenericRowGET(e, 'EXPENSES');
+  if (action === 'addDebtor')         return addDebtorCreditorGET(e, 'DEBTORS SUMMARY');
+  if (action === 'addCreditor')       return addDebtorCreditorGET(e, 'CREDITORS SUMMARY');
+  if (action === 'markCleared')       return markClearedGET(e);
+  if (action === 'addClient')         return addGenericRowGET(e, 'CLIENTS');
+  if (action === 'addPurchase')       return addGenericRowGET(e, 'PURCHASES');
+  if (action === 'addReferral')       return addGenericRowGET(e, 'REFERRALS');
+  if (action === 'addGenericRow')     return addGenericRowGET(e, e.parameter.sheet);
+  if (action === 'logCall')           return logCallGET(e);
+  if (action === 'logMessage')        return logMessageGET(e);
+  if (action === 'archiveDC')         return archiveDCGET(e);
+  if (action === 'sweepArchiveDC')    return sweepArchiveDCGET(e);
+  if (action === 'restoreDC')         return restoreDCGET(e);
+  if (action === 'sweepArchiveSales') return sweepArchiveSalesGET(e);
+  if (action === 'restoreArchiveSale') return restoreArchiveSaleGET(e);
+  if (action === 'aiAsk')             return aiAskGET(e);
+  if (action === 'addSetupProduct')   return addSetupProductGET(e);
+  if (action === 'updateSetupCost')   return updateSetupProductCostGET(e);
+  if (action === 'addSetupCategory')  return addSetupCategoryGET(e);
+  if (action === 'addUnit')           return addUnitGET(e);
+  if (action === 'logAppointment')    return logAppointmentGET(e);
+  if (action === 'deleteAppointment') return deleteAppointmentGET(e);
+  return jsonResponse({ error: 'Unknown action: ' + action });
+}
+
+function doPost(e) {
+  if (e && e.postData && e.postData.contents) {
+    try {
+      var body = JSON.parse(e.postData.contents);
+      e.parameter = e.parameter || {};
+      for (var k in body) e.parameter[k] = body[k];
+    } catch (err) { /* not JSON, ignore */ }
   }
-  if(s.secondary_color){
-    document.documentElement.style.setProperty('--blue', s.secondary_color);
-    document.documentElement.style.setProperty('--blue-dim', s.secondary_color + '1a');
+  return doGet(e);
+}
+function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// =====================
+// SHARED HEADER-MATCHING HELPERS
+// =====================
+function findHeaderRow(sheet, maxScan) {
+  var maxRow = Math.min(maxScan || 6, sheet.getLastRow());
+  var lastCol = sheet.getLastColumn();
+  var best = 1, bestCount = -1;
+  for (var r = 1; r <= maxRow; r++) {
+    var vals = sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0];
+    var count = vals.filter(function (v) { return v && v.toString().trim().length > 0; }).length;
+    if (count > bestCount) { bestCount = count; best = r; }
   }
-  if(s.alert_color){
-    document.documentElement.style.setProperty('--coral', s.alert_color);
-    document.documentElement.style.setProperty('--coral-dim', s.alert_color + '1a');
+  return best;
+}
+function findCol(headers, patterns) {
+  for (var c = 0; c < headers.length; c++) {
+    var h = (headers[c] || '').toString().toLowerCase();
+    for (var p = 0; p < patterns.length; p++) {
+      if (h.indexOf(patterns[p]) !== -1) return c + 1; // 1-indexed
+    }
   }
-  document.getElementById('setupBusinessName').value = s.business_name || '';
-  document.getElementById('setupIndustry').value = s.industry || '';
-  renderThemeSwatches(s.primary_color);
-
-  // v4.1: BYINFORGH footer — on by default, toggled off via
-  // Setup > Business Identity > Branding checkbox (saves branding_enabled = 'false')
-  const brandingOn = s.branding_enabled !== 'false';
-  document.getElementById('byifFooter').style.display = brandingOn ? 'block' : 'none';
-  const brandingCheckbox = document.getElementById('setupBrandingEnabled');
-  if(brandingCheckbox) brandingCheckbox.checked = brandingOn;
+  return -1;
 }
-function renderThemeSwatches(current){
-  document.getElementById('themeSwatches').innerHTML = THEMES.map(t=>
-    `<div class="swatch ${t.primary===current?'selected':''}" style="background:${t.primary}" title="${t.name}" onclick="pickTheme('${t.primary}','${t.secondary}','${t.alert}')"></div>`
-  ).join('');
-}
-function pickTheme(primary, secondary, alert){
-  state.settings.primary_color = primary; state.settings.secondary_color = secondary; state.settings.alert_color = alert;
-  applySettings();
-}
-
-// ---------- HOME ----------
-function daysLabel(days){
-  if(days === null || days === undefined) return 'No date';
-  if(days < 0) return Math.abs(days) + 'd overdue';
-  if(days === 0) return 'Due today';
-  return 'In ' + days + 'd';
-}
-function daysTagClass(days){
-  if(days === null || days === undefined) return 'soon';
-  if(days < 0) return 'overdue';
-  if(days === 0) return 'today';
-  return 'soon';
-}
-function renderHome(){
-  const ds = state.dailySales || {};
-  const dc = state.debtorsCreditors || {};
-  const debtorsBal = dc.debtors && dc.debtors.summary ? dc.debtors.summary.totalBalance : 0;
-  const creditorsBal = dc.creditors && dc.creditors.summary ? dc.creditors.summary.totalBalance : 0;
-  const overdueCount = (dc.debtors && dc.debtors.summary ? dc.debtors.summary.overdueCount : 0) + (dc.creditors && dc.creditors.summary ? dc.creditors.summary.overdueCount : 0);
-
-  document.getElementById('vitalsStrip').innerHTML = `
-    <div class="vital"><div class="vital-label">Today's Revenue</div><div class="vital-value">${fmtMoney(ds.todayRevenue||0)}</div></div>
-    <div class="vital"><div class="vital-label">Today's Gross Profit</div><div class="vital-value teal">${fmtMoney(ds.todayProfit||0)}</div></div>
-    <div class="vital"><div class="vital-label">Sales Logged Today</div><div class="vital-value">${ds.todayCount||0}</div></div>
-    <div class="vital"><div class="vital-label">Owed to you</div><div class="vital-value teal">${fmtMoney(debtorsBal)}</div></div>
-    <div class="vital"><div class="vital-label">You owe</div><div class="vital-value amber">${fmtMoney(creditorsBal)}</div></div>
-    <div class="vital"><div class="vital-label">Overdue accounts</div><div class="vital-value ${overdueCount>0?'coral':''}">${overdueCount}</div></div>
-  `;
-
-  const rev = state.revenue || {};
-  const monthlyTarget = rev.monthlyTarget || 0;
-  const monthlyActual = rev.monthlyActual || 0;
-  const pct = monthlyTarget > 0 ? Math.min(150, (monthlyActual/monthlyTarget)*100) : 0;
-  if(monthlyTarget <= 0){
-    document.getElementById('revenueBlock').innerHTML = `<div class="section-note">No monthly target set yet. Go to Setup → Revenue Targets &amp; Expense Budgets to add one and this bar will track your pace automatically.</div>`;
-  } else {
-    document.getElementById('revenueBlock').innerHTML = `
-      <div class="summary-row" style="margin-bottom:6px">
-        <div class="summary-chip"><div class="summary-chip-label">Today</div><div class="summary-chip-value">${fmtMoneyShort(rev.dailyActual)}</div></div>
-        <div class="summary-chip blue"><div class="summary-chip-label">This Week</div><div class="summary-chip-value">${fmtMoneyShort(rev.weeklyActual)}</div></div>
-      </div>
-      <div style="font-size:11.5px;color:var(--ink-dim);display:flex;justify-content:space-between">
-        <span>${fmtMoneyShort(monthlyActual)} of ${fmtMoneyShort(monthlyTarget)} target</span>
-        <span class="mono">${pct.toFixed(0)}%</span>
-      </div>
-      <div class="progress-outer"><div class="progress-inner ${pct>100?'over':''}" style="width:${Math.min(100,pct)}%"></div></div>
-      <div style="font-size:11.5px;color:var(--ink-dim);margin-top:8px">
-        ${rev.gapToTarget>0 ? 'GHS '+Math.round(rev.gapToTarget).toLocaleString()+' left to reach target' : 'Target reached — great month'}
-        · pace ${rev.pacePct?rev.pacePct.toFixed(0):0}% of expected-by-today
-      </div>
-    `;
+function findColIdx(headers, patterns) {
+  for (var c = 0; c < headers.length; c++) {
+    var h = (headers[c] || '').toString().toLowerCase();
+    for (var p = 0; p < patterns.length; p++) {
+      if (h.indexOf(patterns[p]) !== -1) return c;
+    }
   }
-
-  const fu = state.followUps || { items: [] };
-  document.getElementById('followUpCountBadge').textContent = fu.items && fu.items.length ? ' ('+fu.items.length+')' : '';
-  const topFu = (fu.items||[]).slice(0,6);
-  document.getElementById('homeFollowUps').innerHTML = topFu.length ? topFu.map(i=>`
-    <div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
-      <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}</span></div>
-      <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
-    </div>
-  `).join('') : '<div class="empty">Nothing due — clean books</div>';
-
-  const debtorsRows = (dc.debtors && dc.debtors.rows) || [];
-  const creditorsRows = (dc.creditors && dc.creditors.rows) || [];
-  const dCleared = debtorsRows.filter(r=>r.balance<=0).length;
-  const dOverdue = debtorsRows.filter(r=>r.balance>0 && r.daysOverdue>0).length;
-  const dPending = debtorsRows.filter(r=>r.balance>0 && r.daysOverdue<=0).length;
-  const cCleared = creditorsRows.filter(r=>r.balance<=0).length;
-  const cOverdue = creditorsRows.filter(r=>r.balance>0 && r.daysOverdue>0).length;
-  const cPending = creditorsRows.filter(r=>r.balance>0 && r.daysOverdue<=0).length;
-  document.getElementById('statusBoard').innerHTML = `
-    <div class="status-cell"><div class="num" style="color:var(--teal)">${dCleared+cCleared}</div><div class="lbl">Cleared</div></div>
-    <div class="status-cell"><div class="num" style="color:var(--amber)">${dPending+cPending}</div><div class="lbl">Pending</div></div>
-    <div class="status-cell"><div class="num" style="color:var(--coral)">${dOverdue+cOverdue}</div><div class="lbl">Overdue</div></div>
-    <div class="status-cell"><div class="num">${debtorsRows.length+creditorsRows.length}</div><div class="lbl">Total Accounts</div></div>
-  `;
-
-  const health = state.clientHealth || { counts: {} };
-  const c = health.counts || {};
-  document.getElementById('healthCountBadge').textContent = health.rows && health.rows.length ? ' ('+health.rows.length+')' : '';
-  document.getElementById('homeHealthBoard').innerHTML = `
-    <div class="health-cell active"><div class="num">${c.active||0}</div><div class="lbl">🟢 Active</div></div>
-    <div class="health-cell due"><div class="num">${c.due||0}</div><div class="lbl">🟡 Due</div></div>
-    <div class="health-cell overdue"><div class="num">${c.overdue||0}</div><div class="lbl">🔴 Overdue</div></div>
-    <div class="health-cell dormant"><div class="num">${c.dormant||0}</div><div class="lbl">⚫ Dormant</div></div>
-  `;
-
-  const recent = (ds.rows||[]).slice(0,8);
-  document.getElementById('homeRecentSales').innerHTML = recent.length ? recent.map(r=>
-    `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
-      <div><strong>${r.product||'—'}</strong><br><span style="color:var(--ink-dim);font-size:11px">${r.customer||'—'} · ${r.date||''}</span></div>
-      <div class="mono" style="text-align:right">${fmtMoney(r.revenue)}</div>
-    </div>`).join('') : '<div class="empty">No sales logged yet</div>';
-
-  const cm = state.callsMessages || { calls: [], messages: [] };
-  let activity = [];
-  (cm.calls||[]).slice(0,10).forEach(c=>activity.push({icon:'📞',label:c.business||'—',detail:c.notes||'Call logged',date:c.date}));
-  (cm.messages||[]).slice(0,10).forEach(m=>activity.push({icon:'💬',label:m.business||'—',detail:(m.channel||'')+' — '+(m.summary||''),date:m.date}));
-  (ds.rows||[]).slice(0,10).forEach(r=>activity.push({icon:'🧾',label:r.customer||'—',detail:'Sale — '+(r.product||''),date:r.date}));
-  activity = activity.slice(0,10);
-  document.getElementById('homeActivity').innerHTML = activity.length ? activity.map(a=>`
-    <div class="activity-item"><div class="activity-icon">${a.icon}</div>
-      <div><strong>${a.label}</strong><br><span style="color:var(--ink-dim)">${a.detail} · ${a.date}</span></div>
-    </div>`).join('') : '<div class="empty">No activity logged yet</div>';
+  return -1;
 }
-
-async function quickLogCall(){
-  const business = document.getElementById('hcBusiness').value.trim();
-  if(!business){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
-  const params = { business: business, number: document.getElementById('hcNumber').value.trim(), notes: document.getElementById('hcNotes').value.trim(),
-    nextAction: document.getElementById('hcNextAction').value.trim(),
-    nextFollowUp: document.getElementById('hcNextFollowUp').value ? document.getElementById('hcNextFollowUp').value.split('-').reverse().join('/') : '' };
-  document.getElementById('hcResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['hcBusiness','hcNumber','hcNotes','hcNextAction','hcNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function quickLogMessage(){
-  const business = document.getElementById('hmBusiness').value.trim();
-  if(!business){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
-  const params = { business: business, channel: document.getElementById('hmChannel').value, summary: document.getElementById('hmSummary').value.trim() };
-  document.getElementById('hmResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['hmBusiness','hmSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-
-// ---------- FOLLOW-UPS (full tab) ----------
-function renderFollowUpsFull(){
-  const fu = state.followUps || { items: [] };
-  const items = fu.items || [];
-  if(!items.length){ document.getElementById('followUpsFull').innerHTML = '<div class="empty">Nothing due or overdue right now</div>'; return; }
-  const overdue = items.filter(i=>i.daysUntil!==null && i.daysUntil<0);
-  const today = items.filter(i=>i.daysUntil===0);
-  const soon = items.filter(i=>i.daysUntil!==null && i.daysUntil>0);
-  const none = items.filter(i=>i.daysUntil===null);
-  function block(title, list){
-    if(!list.length) return '';
-    return `<div style="margin-bottom:16px"><div class="card-title" style="margin-bottom:8px">${title} (${list.length})</div>` +
-      list.map(i=>`<div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
-        <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}${i.dueDate?' · due '+i.dueDate:''}</span></div>
-        <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
-      </div>`).join('') + `</div>`;
+function parseDateFlex(str) {
+  if (!str) return null;
+  if (Object.prototype.toString.call(str) === '[object Date]') return isNaN(str.getTime()) ? null : str;
+  str = str.toString().trim();
+  var parts = str.split('/');
+  if (parts.length === 3) {
+    var day = parseInt(parts[0], 10), month = parseInt(parts[1], 10) - 1, year = parseInt(parts[2], 10);
+    if (!isNaN(day) && !isNaN(month) && !isNaN(year) && year > 2000) return new Date(year, month, day);
   }
-  document.getElementById('followUpsFull').innerHTML = block('Overdue', overdue) + block('Due Today', today) + block('Due Soon', soon) + block('No Date Set', none);
+  var d = new Date(str);
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d;
+  return null;
+}
+function fmtDateKey(d) { return Utilities.formatDate(d, TZ, 'dd/MM/yyyy'); }
+
+function readGenericTable(sheetName, maxRows) {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return { headers: [], rows: [], error: 'Sheet not found: ' + sheetName };
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return { headers: [], rows: [] };
+  var headerRow = findHeaderRow(sheet);
+  var headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
+  var firstDataRow = headerRow + 1;
+  var numRows = Math.min(lastRow - firstDataRow + 1, maxRows || 3000);
+  if (numRows <= 0) return { headers: headers, rows: [] };
+  var data = sheet.getRange(firstDataRow, 1, numRows, lastCol).getDisplayValues();
+  var rows = [];
+  for (var i = 0; i < data.length; i++) {
+    var rowObj = {};
+    var hasContent = false;
+    for (var c = 0; c < headers.length; c++) {
+      var h = (headers[c] || ('col' + c)).toString().trim();
+      if (!h) h = 'col' + c;
+      var cellVal = data[i][c] || '';
+      rowObj[h] = cellVal;
+      // v4.3: a bare "0" doesn't count as "this row has real content".
+      // Sheets often have a formula (e.g. Opening Stock, Lead Time)
+      // filled down hundreds of rows past the last real entry, and that
+      // formula evaluates to "0" on every blank row below it — that was
+      // making thousands of empty rows look "real" and get shipped to
+      // the browser on every single load. A genuine row always has
+      // something else non-zero (a name, code, date, or a formatted
+      // amount like "0.00"), so ignoring a bare "0" here is safe and
+      // never drops real data.
+      if (cellVal && cellVal.toString().trim() !== '0') hasContent = true;
+    }
+    if (hasContent) { rowObj.__row = firstDataRow + i; rows.push(rowObj); }
+  }
+  return { headers: headers.filter(function (h) { return h; }), rows: rows, headerRow: headerRow, firstDataRow: firstDataRow };
 }
 
-// ---------- CALENDAR — v4.0 ----------
-function ddmmyyyyToDate(s){
-  if(!s) return null;
-  const parts = s.toString().split('/');
-  if(parts.length!==3) return null;
-  const d = new Date(parseInt(parts[2],10), parseInt(parts[1],10)-1, parseInt(parts[0],10));
-  return isNaN(d.getTime()) ? null : d;
-}
-function sameDay(a,b){ return a && b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
-function calShiftMonth(delta){ calViewDate = new Date(calViewDate.getFullYear(), calViewDate.getMonth()+delta, 1); renderCalendar(); }
-function calDayItems(day){
-  const items = [];
-  (state.followUps && state.followUps.items || []).forEach(i=>{
-    const d = ddmmyyyyToDate(i.dueDate);
-    if(d && sameDay(d, day)) items.push({type: i.daysUntil!==null && i.daysUntil<0 ? 'overdue':'due', label: (i.name||'—')+' — '+i.kind});
+function appendGenericRow(sheetName, valuesByHeader) {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw new Error('Sheet not found: ' + sheetName);
+  var headerRow = findHeaderRow(sheet);
+  var lastCol = sheet.getLastColumn();
+  var headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
+  var targetRow = sheet.getLastRow() + 1;
+
+  Object.keys(valuesByHeader).forEach(function (key) {
+    var col = -1;
+    var keyLower = key.toLowerCase();
+    for (var c = 0; c < headers.length; c++) {
+      if ((headers[c] || '').toString().trim().toLowerCase().indexOf(keyLower) !== -1) { col = c + 1; break; }
+    }
+    if (col === -1) return;
+    sheet.getRange(targetRow, col).setValue(valuesByHeader[key]);
   });
-  (state.appointments || []).forEach(a=>{
-    const d = ddmmyyyyToDate(a.date);
-    if(d && sameDay(d, day)) items.push({type:'appt', label: a.title + (a.client?' — '+a.client:''), row:a.row});
+  return targetRow;
+}
+
+function addGenericRowGET(e, sheetName) {
+  if (!sheetName) return jsonResponse({ error: 'No sheet specified' });
+  var values = {};
+  Object.keys(e.parameter).forEach(function (k) {
+    if (k === 'action' || k === 'sheet' || k === 't') return;
+    values[k] = e.parameter[k];
   });
+  try {
+    var row = appendGenericRow(sheetName, values);
+    try {
+      var nameGuess = values['Business'] || values['Client'] || values['Name'] || values['Business Name'] || values['Client Name'] || '';
+      logActivity(sheetName, nameGuess, 'row_added', '', 'row ' + row, 'Added via dashboard');
+    } catch (le) { /* logging must never block the save */ }
+    return jsonResponse({ success: true, sheet: sheetName, row: row });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+// =====================
+// UTILITY SHEETS (auto-created, never touch existing tabs)
+// =====================
+function ensureSheet(ss, name, headers) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  }
+  return sheet;
+}
+function ensureUtilitySheets(ss) {
+  var c = reqCache();
+  if (c.utilitySheets) return c.utilitySheets;
+  c.utilitySheets = {
+    calls: ensureSheet(ss, 'CALL_LOG', ['Timestamp', 'Date', 'Business/Client', 'Number', 'Notes', 'Next Action', 'Next Follow Up']),
+    messages: ensureSheet(ss, 'MESSAGE_LOG', ['Timestamp', 'Date', 'Business/Client', 'Channel', 'Summary']),
+    archiveDC: ensureSheet(ss, 'ARCHIVE_DC', ['Archived Date', 'Type', 'Name', 'Contact', 'Invoice Date', 'Due Date', 'Amount Owed', 'Amount Paid', 'Balance', 'Notes', 'Payment Method', 'Reason']),
+    archiveSales: ensureSheet(ss, 'ARCHIVE_SALES', ['Archived Date', 'Date', 'Customer', 'Stock Code', 'Product', 'Qty', 'Revenue', 'Gross Profit', 'Reason']),
+    appointments: ensureSheet(ss, 'APPOINTMENTS', ['Timestamp', 'Date', 'Title', 'Client', 'Notes'])
+  };
+  return c.utilitySheets;
+}
+function ensureUnitsSheet(ss) {
+  var sheet = ss.getSheetByName('DASHBOARD_UNITS');
+  if (!sheet) {
+    sheet = ss.insertSheet('DASHBOARD_UNITS');
+    sheet.getRange(1, 1, 1, 1).setValues([['Unit']]);
+    sheet.getRange(1, 1, 1, 1).setFontWeight('bold');
+    var defaults = [['Pack'], ['Bottle'], ['Box'], ['Vial'], ['Unit'], ['Carton'], ['Piece']];
+    sheet.getRange(2, 1, defaults.length, 1).setValues(defaults);
+  }
+  return sheet;
+}
+function getUnits() {
+  var ss = getMainSS();
+  var sheet = ensureUnitsSheet(ss);
+  var data = sheet.getDataRange().getValues();
+  var units = [];
+  for (var i = 1; i < data.length; i++) { if (data[i][0]) units.push(data[i][0].toString()); }
+  return units;
+}
+function addUnitGET(e) {
+  try {
+    var unit = (e.parameter.unit || '').toString().trim();
+    if (!unit) return jsonResponse({ error: 'unit is required' });
+    var ss = getMainSS();
+    var sheet = ensureUnitsSheet(ss);
+    var existing = getUnits();
+    if (existing.map(function (u) { return u.toLowerCase(); }).indexOf(unit.toLowerCase()) === -1) sheet.appendRow([unit]);
+    return jsonResponse({ success: true, units: getUnits() });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+// =====================
+// CALLS + MESSAGES
+// =====================
+function logCallGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheets = ensureUtilitySheets(ss);
+    var now = new Date();
+    var todayStr = fmtDateKey(now);
+    var business = e.parameter.business || '';
+    if (!business.toString().trim()) return jsonResponse({ error: 'Business/Client name is required' });
+    var number = e.parameter.number || '';
+    var notes = e.parameter.notes || '';
+    var nextAction = e.parameter.nextAction || '';
+    var nextFollowUp = e.parameter.nextFollowUp || '';
+    sheets.calls.appendRow([now, todayStr, business, number, notes, nextAction, nextFollowUp]);
+    return jsonResponse({ success: true, row: sheets.calls.getLastRow() });
+  } catch (err) { return jsonResponse({ error: err.toString() }); }
+}
+function logMessageGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheets = ensureUtilitySheets(ss);
+    var now = new Date();
+    var todayStr = fmtDateKey(now);
+    var business = e.parameter.business || '';
+    if (!business.toString().trim()) return jsonResponse({ error: 'Business/Client name is required' });
+    var channel = e.parameter.channel || 'WhatsApp';
+    var summary = e.parameter.summary || '';
+    sheets.messages.appendRow([now, todayStr, business, channel, summary]);
+    return jsonResponse({ success: true, row: sheets.messages.getLastRow() });
+  } catch (err) { return jsonResponse({ error: err.toString() }); }
+}
+function getCallsMessages() {
+  var ss = getMainSS();
+  var sheets = ensureUtilitySheets(ss);
+  var calls = [], messages = [];
+  var cData = sheets.calls.getDataRange().getValues();
+  for (var i = 1; i < cData.length; i++) {
+    var r = cData[i];
+    if (!r[0]) continue;
+    calls.push({ timestamp: r[0].toString(), date: r[1] ? r[1].toString() : '', business: r[2] || '', number: r[3] || '', notes: r[4] || '', nextAction: r[5] || '', nextFollowUp: r[6] || '', row: i + 1 });
+  }
+  var mData = sheets.messages.getDataRange().getValues();
+  for (var j = 1; j < mData.length; j++) {
+    var r2 = mData[j];
+    if (!r2[0]) continue;
+    messages.push({ timestamp: r2[0].toString(), date: r2[1] ? r2[1].toString() : '', business: r2[2] || '', channel: r2[3] || '', summary: r2[4] || '', row: j + 1 });
+  }
+  return { calls: calls.slice(-200).reverse(), messages: messages.slice(-200).reverse() };
+}
+
+// =====================
+// CALENDAR / APPOINTMENTS
+// =====================
+function logAppointmentGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheets = ensureUtilitySheets(ss);
+    var now = new Date();
+    var date = e.parameter.date || fmtDateKey(now);
+    var title = e.parameter.title || '';
+    var client = e.parameter.client || '';
+    var notes = e.parameter.notes || '';
+    if (!title) return jsonResponse({ error: 'Title is required' });
+    sheets.appointments.appendRow([now, date, title, client, notes]);
+    try { logActivity('APPOINTMENTS', client, 'appointment_added', '', title, 'Scheduled ' + date); } catch (le) {}
+    return jsonResponse({ success: true, row: sheets.appointments.getLastRow() });
+  } catch (err) { return jsonResponse({ error: err.toString() }); }
+}
+function deleteAppointmentGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheets = ensureUtilitySheets(ss);
+    var row = parseInt(e.parameter.row, 10);
+    if (!row || row < 2) return jsonResponse({ error: 'Invalid row' });
+    sheets.appointments.deleteRow(row);
+    return jsonResponse({ success: true });
+  } catch (err) { return jsonResponse({ error: err.toString() }); }
+}
+function getAppointments() {
+  var c = reqCache();
+  if (c.appointments) return c.appointments;
+  var ss = getMainSS();
+  var sheets = ensureUtilitySheets(ss);
+  var data = sheets.appointments.getDataRange().getValues();
+  var items = [];
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    if (!r[1]) continue;
+    items.push({ row: i + 1, date: r[1] ? r[1].toString() : '', title: r[2] || '', client: r[3] || '', notes: r[4] || '' });
+  }
+  c.appointments = items;
   return items;
 }
-function renderCalendar(){
-  const y = calViewDate.getFullYear(), m = calViewDate.getMonth();
-  document.getElementById('calMonthLabel').textContent = calViewDate.toLocaleDateString('en-GB',{month:'long', year:'numeric'});
-  const firstOfMonth = new Date(y,m,1);
-  const startOffset = firstOfMonth.getDay();
-  const daysInMonth = new Date(y,m+1,0).getDate();
-  const todayD = new Date(); todayD.setHours(0,0,0,0);
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('');
-  for(let i=0;i<startOffset;i++) html += '<div class="cal-cell empty"></div>';
-  for(let day=1; day<=daysInMonth; day++){
-    const dObj = new Date(y,m,day);
-    const items = calDayItems(dObj);
-    const isToday = sameDay(dObj, todayD);
-    const isSelected = sameDay(dObj, calSelectedDate);
-    const dots = items.slice(0,6).map(it=>`<span class="cal-dot ${it.type}"></span>`).join('');
-    html += `<div class="cal-cell ${isToday?'today':''} ${isSelected?'selected':''}" onclick="calSelectDay(${y},${m},${day})">
-      <div class="cal-daynum">${day}</div>
-      <div class="cal-dot-row">${dots}</div>
-    </div>`;
+
+// =====================
+// DAILY_SALES
+// =====================
+var DS_HEADER_ROW = 3;
+var DS_COLS = {
+  date: 2, customer: 3, stockCode: 4, product: 5, category: 6, unit: 7, qty: 8, unitPrice: 9,
+  revenue: 10, unitCost: 11, discountPct: 12, taxPct: 13, taxAmt: 14, cogs: 15, grossProfit: 16,
+  marginPct: 17, paymentMethod: 18, notes: 19
+};
+
+function getDailySalesRaw() {
+  // v4.4: this used to be called 4x per getData() (from dailySales,
+  // clientHealth, revenue, and tracker), each doing a full re-read and
+  // re-parse of the entire DAILY_SALES sheet. Now computed once and
+  // reused for the rest of this request.
+  var c = reqCache();
+  if (c.dailySalesRaw) return c.dailySalesRaw;
+
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('DAILY_SALES');
+  if (!sheet) { c.dailySalesRaw = []; return c.dailySalesRaw; }
+  var lastRow = sheet.getLastRow();
+  var firstDataRow = DS_HEADER_ROW + 1;
+  if (lastRow < firstDataRow) { c.dailySalesRaw = []; return c.dailySalesRaw; }
+  var numRows = lastRow - firstDataRow + 1;
+  var data = sheet.getRange(firstDataRow, 1, numRows, 19).getDisplayValues();
+  var rows = [];
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var dateVal = r[DS_COLS.date - 1];
+    if (!dateVal || !r[DS_COLS.product - 1]) continue;
+    var revenue = parseFloat((r[DS_COLS.revenue - 1] || '0').toString().replace(/,/g, '')) || 0;
+    var profit = parseFloat((r[DS_COLS.grossProfit - 1] || '0').toString().replace(/,/g, '')) || 0;
+    rows.push({
+      row: firstDataRow + i, date: dateVal, customer: r[DS_COLS.customer - 1], stockCode: r[DS_COLS.stockCode - 1],
+      product: r[DS_COLS.product - 1], category: r[DS_COLS.category - 1], unit: r[DS_COLS.unit - 1],
+      qty: r[DS_COLS.qty - 1], unitPrice: r[DS_COLS.unitPrice - 1], revenue: revenue, unitCost: r[DS_COLS.unitCost - 1],
+      discountPct: r[DS_COLS.discountPct - 1], taxPct: r[DS_COLS.taxPct - 1], taxAmt: r[DS_COLS.taxAmt - 1],
+      cogs: r[DS_COLS.cogs - 1], grossProfit: profit, marginPct: r[DS_COLS.marginPct - 1],
+      paymentMethod: r[DS_COLS.paymentMethod - 1] || '', notes: r[DS_COLS.notes - 1] || ''
+    });
   }
-  document.getElementById('calGrid').innerHTML = html;
+  c.dailySalesRaw = rows;
+  return rows;
 }
-function calSelectDay(y,m,day){
-  calSelectedDate = new Date(y,m,day);
-  renderCalendar();
-  renderAgenda();
-}
-function renderAgenda(){
-  const items = calDayItems(calSelectedDate);
-  const todayD = new Date(); todayD.setHours(0,0,0,0);
-  document.getElementById('agendaDayLabel').textContent = sameDay(calSelectedDate, todayD) ? 'today, '+calSelectedDate.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : calSelectedDate.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
-  if(!document.getElementById('apptDate').value){
-    document.getElementById('apptDate').valueAsDate = calSelectedDate;
+
+function getDailySalesData() {
+  var rows = getDailySalesRaw();
+  if (!rows.length) return { rows: [] };
+  var todayStr = fmtDateKey(new Date());
+  var todayRevenue = 0, todayProfit = 0, todayCount = 0;
+  var totalRevenue = 0, totalProfit = 0;
+  for (var i = 0; i < rows.length; i++) {
+    totalRevenue += rows[i].revenue; totalProfit += rows[i].grossProfit;
+    if (rows[i].date === todayStr) { todayRevenue += rows[i].revenue; todayProfit += rows[i].grossProfit; todayCount++; }
   }
-  document.getElementById('agendaList').innerHTML = items.length ? items.map(it=>`
-    <div class="agenda-item">
-      <span>${it.label}</span>
-      ${it.type==='appt' ? `<button class="refresh-btn ghost agenda-del" onclick="removeAppointment(${it.row})">Remove</button>` : ''}
-    </div>`).join('') : '<div class="empty">Nothing scheduled this day</div>';
-}
-async function submitAppointment(){
-  const title = document.getElementById('apptTitle').value.trim();
-  if(!title){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">Title is required.</span>'; return; }
-  const dateVal = document.getElementById('apptDate').value;
-  const params = { title: title, client: document.getElementById('apptClient').value.trim(),
-    date: dateVal ? dateVal.split('-').reverse().join('/') : '', notes: document.getElementById('apptNotes').value.trim() };
-  document.getElementById('apptResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=logAppointment&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Appointment added'); ['apptTitle','apptClient','apptNotes'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function removeAppointment(row){
-  try{
-    await fetch(API_URL + '?action=deleteAppointment&row=' + row + '&t=' + Date.now());
-    showToast('Appointment removed');
-    loadData();
-  }catch(e){ showToast('Connection error'); }
+  return {
+    rows: rows.slice(-500).reverse(),
+    totalRows: rows.length,
+    todayRevenue: todayRevenue, todayProfit: todayProfit, todayCount: todayCount,
+    totalRevenue: totalRevenue, totalProfit: totalProfit
+  };
 }
 
-// ---------- TRACKER (v4.0 with generic sheet-mirrored sub-tabs) ----------
-function renderTracker(){
-  const t = state.tracker || {};
-  const trend = t.monthlyTrend || [];
-  if(trend.length){
-    const maxVal = Math.max.apply(null, trend.map(m=>m.revenue)) || 1;
-    document.getElementById('trendChart').innerHTML = `<div class="bar-chart">` + trend.map(m=>{
-      const h = Math.max(4, (m.revenue/maxVal)*120);
-      return `<div class="bar-col"><div class="bar-value">${fmtMoneyShort(m.revenue)}</div><div class="bar" style="height:${h}px"></div><div class="bar-label">${m.label}</div></div>`;
-    }).join('') + `</div>`;
-  } else {
-    document.getElementById('trendChart').innerHTML = '<div class="empty">No sales history yet</div>';
+function addSaleGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DAILY_SALES');
+    if (!sheet) return jsonResponse({ error: 'DAILY_SALES not found' });
+
+    var stockCode = (e.parameter.stockCode || '').toString().trim();
+    var qty = parseFloat(e.parameter.qty) || 0;
+    if (!stockCode) return jsonResponse({ error: 'Stock code is required' });
+    if (!qty || qty <= 0) return jsonResponse({ error: 'Quantity must be greater than zero' });
+
+    var lastRow = sheet.getLastRow();
+    var targetRow = Math.max(lastRow + 1, DS_HEADER_ROW + 1);
+
+    var date = e.parameter.date || fmtDateKey(new Date());
+    var customer = e.parameter.customer || '';
+    var discountPct = e.parameter.discountPct || '';
+    var taxPct = e.parameter.taxPct || '';
+    var paymentMethod = e.parameter.paymentMethod || '';
+    var notes = e.parameter.notes || '';
+
+    sheet.getRange(targetRow, DS_COLS.date).setValue(date);
+    sheet.getRange(targetRow, DS_COLS.customer).setValue(customer);
+    sheet.getRange(targetRow, DS_COLS.stockCode).setValue(stockCode);
+    sheet.getRange(targetRow, DS_COLS.qty).setValue(qty);
+    if (discountPct !== '') sheet.getRange(targetRow, DS_COLS.discountPct).setValue(discountPct);
+    if (taxPct !== '') sheet.getRange(targetRow, DS_COLS.taxPct).setValue(taxPct);
+    if (paymentMethod !== '') sheet.getRange(targetRow, DS_COLS.paymentMethod).setValue(paymentMethod);
+    if (notes !== '') sheet.getRange(targetRow, DS_COLS.notes).setValue(notes);
+
+    SpreadsheetApp.flush();
+    try { logActivity('DAILY_SALES', customer, 'sale_added', '', stockCode + ' x' + qty, 'Logged via dashboard'); } catch (le) {}
+    return jsonResponse({ success: true, row: targetRow });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
   }
+}
 
-  const top = t.topClients || [];
-  document.getElementById('topClientsList').innerHTML = top.length ? top.map((c,i)=>`
-    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
-      <div><span class="mono" style="color:var(--ink-dim)">#${i+1}</span> <strong>${c.name}</strong></div>
-      <div class="mono">${fmtMoney(c.revenue)}</div>
-    </div>`).join('') : '<div class="empty">No sales history yet</div>';
-
-  const aging = t.aging || {d0_30:0,d31_60:0,d61_90:0,d90plus:0};
-  const maxAging = Math.max(aging.d0_30, aging.d31_60, aging.d61_90, aging.d90plus, 1);
-  function agingRow(label, val, cls){
-    const pct = Math.max(2,(val/maxAging)*100);
-    return `<div class="aging-row"><div class="aging-label">${label}</div><div class="aging-bar-outer"><div class="aging-bar-inner ${cls}" style="width:${pct}%"></div></div><div class="aging-value">${fmtMoneyShort(val)}</div></div>`;
+// =====================
+// TAX CODES
+// =====================
+function getTaxCodes() {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('SETUP');
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  var vals = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  var markerRow = -1;
+  for (var r = 0; r < vals.length; r++) {
+    if (vals[r].some(function (v) { return (v || '').toString().indexOf('MULTIPLE TAX CODES') !== -1; })) { markerRow = r; break; }
   }
-  document.getElementById('agingChart').innerHTML =
-    agingRow('0–30d', aging.d0_30, '') +
-    agingRow('31–60d', aging.d31_60, 'warn') +
-    agingRow('61–90d', aging.d61_90, 'warn') +
-    agingRow('90d+', aging.d90plus, 'danger');
-
-  renderSheetMirrorTable('dailyTotals','dailyTotalsHead','dailyTotalsBody');
-  renderSheetMirrorTable('weeklySales','weeklySalesHead','weeklySalesBody');
-  renderSheetMirrorTable('monthlyRpt','monthlyRptHead','monthlyRptBody');
-  renderSheetMirrorTable('annualSummary','annualSummaryHead','annualSummaryBody');
-  renderSheetMirrorTable('stockAnalysis','stockAnalysisHead','stockAnalysisBody');
-  renderSheetMirrorTable('purchases','purchasesViewHead','purchasesViewBody');
-
-  const pd = state.profitDash || { rows: [] };
-  document.getElementById('profitDashBody').innerHTML = pd.rows && pd.rows.length ? pd.rows.map(r=>
-    r.isSection
-      ? `<div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;color:var(--teal);margin:12px 0 4px">${r.label}</div>`
-      : `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px"><span>${r.label}</span><span class="mono">${r.value}</span></div>`
-  ).join('') : '<div class="empty">PROFIT_DASH sheet not found or empty</div>';
-}
-function renderSheetMirrorTable(stateKey, headEl, bodyEl){
-  const t = state[stateKey] || { headers: [], rows: [] };
-  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
-  document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(0,400).map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
-  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No data found on this sheet yet</td></tr>`;
-}
-
-// ---------- CLIENT HEALTH (reorder pipeline) ----------
-function renderClientHealth(){
-  const health = state.clientHealth || { rows: [], counts: {} };
-  const c = health.counts || {};
-  const boardHtml = `
-    <div class="health-cell active"><div class="num">${c.active||0}</div><div class="lbl">🟢 Active</div></div>
-    <div class="health-cell due"><div class="num">${c.due||0}</div><div class="lbl">🟡 Due</div></div>
-    <div class="health-cell overdue"><div class="num">${c.overdue||0}</div><div class="lbl">🔴 Overdue</div></div>
-    <div class="health-cell dormant"><div class="num">${c.dormant||0}</div><div class="lbl">⚫ Dormant</div></div>
-  `;
-  document.getElementById('healthBoardFull').innerHTML = boardHtml;
-  const rows = health.rows || [];
-  document.getElementById('healthTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.customer}</td><td>${r.label}</td><td>${r.lastOrder}</td><td class="mono">${r.daysSince}d</td><td class="mono">${fmtMoney(r.totalRevenue)}</td></tr>`
-  ).join('') : '<tr><td colspan="5" class="empty">No client order history yet</td></tr>';
-}
-
-// ---------- DAILY SALES — v4.0 tax dropdown + payment method + notes ----------
-function renderTaxDropdown(){
-  const sel = document.getElementById('saleTax');
-  const codes = (state.taxCodes || []).filter(c=>c.active);
-  const current = sel.value;
-  sel.innerHTML = '<option value="">Use default</option>' + codes.map(c=>
-    `<option value="${c.rate}">${c.code} (${c.rate}%)${c.description?' — '+c.description:''}</option>`
-  ).join('');
-  if(current) sel.value = current;
-}
-function renderSales(){
-  const ds = state.dailySales || {};
-  document.getElementById('salesSummaryChips').innerHTML = `
-    <div class="summary-chip"><div class="summary-chip-label">Today Revenue</div><div class="summary-chip-value">${fmtMoney(ds.todayRevenue||0)}</div></div>
-    <div class="summary-chip"><div class="summary-chip-label">Today Profit</div><div class="summary-chip-value">${fmtMoney(ds.todayProfit||0)}</div></div>
-    <div class="summary-chip blue"><div class="summary-chip-label">All-Time Revenue</div><div class="summary-chip-value">${fmtMoney(ds.totalRevenue||0)}</div></div>
-    <div class="summary-chip blue"><div class="summary-chip-label">All-Time Profit</div><div class="summary-chip-value">${fmtMoney(ds.totalProfit||0)}</div></div>
-  `;
-  const rows = ds.rows || [];
-  document.getElementById('salesTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.date||''}</td><td>${r.customer||''}</td><td>${r.product||''}</td><td>${r.qty||''}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td><td>${r.paymentMethod||''}</td></tr>`
-  ).join('') : '<tr><td colspan="7" class="empty">No sales yet</td></tr>';
-  if(!document.getElementById('saleDate').value) document.getElementById('saleDate').valueAsDate = new Date();
-}
-async function submitSale(){
-  const date = document.getElementById('saleDate').value;
-  const ddmmyyyy = date ? date.split('-').reverse().join('/') : '';
-  const customer = document.getElementById('saleCustomer').value.trim();
-  const stockCode = document.getElementById('saleStockCode').value.trim();
-  const qty = document.getElementById('saleQty').value;
-  const discount = document.getElementById('saleDiscount').value.trim();
-  const tax = document.getElementById('saleTax').value;
-  const paymentMethod = document.getElementById('salePaymentMethod').value;
-  const notes = document.getElementById('saleNotes').value.trim();
-  const resultEl = document.getElementById('saleResult');
-  if(!stockCode || !qty){ resultEl.innerHTML = '<span style="color:var(--coral)">Stock code and quantity are required.</span>'; return; }
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const url = API_URL + '?action=addSale&date=' + encodeURIComponent(ddmmyyyy) + '&customer=' + encodeURIComponent(customer)
-      + '&stockCode=' + encodeURIComponent(stockCode) + '&qty=' + encodeURIComponent(qty)
-      + '&discountPct=' + encodeURIComponent(discount) + '&taxPct=' + encodeURIComponent(tax)
-      + '&paymentMethod=' + encodeURIComponent(paymentMethod) + '&notes=' + encodeURIComponent(notes) + '&t=' + Date.now();
-    const res = await fetch(url); const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved — row ' + data.row + '</span>';
-      showToast('Sale logged');
-      ['saleCustomer','saleStockCode','saleQty','saleDiscount','saleNotes'].forEach(id=>document.getElementById(id).value='');
-      document.getElementById('saleTax').value=''; document.getElementById('salePaymentMethod').value='';
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-
-// ---------- GENERIC TABS (Expenses, Clients, Purchases, Referrals) ----------
-function buildGenericForm(containerId, headers, prefix){
-  const el = document.getElementById(containerId);
-  if(!headers || !headers.length){ el.innerHTML = '<div class="section-note">No headers detected yet on this sheet — add a header row first.</div>'; return; }
-  el.innerHTML = headers.map((h,i)=>{
-    const id = prefix + '_' + i;
-    const isDate = /date/i.test(h);
-    return `<div class="field"><label>${h}</label><input type="${isDate?'date':'text'}" id="${id}" data-header="${h.replace(/"/g,'&quot;')}"></div>`;
-  }).join('');
-}
-async function submitGenericAdd(stateKey, action){
-  const headers = (state[stateKey] && state[stateKey].headers) || [];
-  const prefix = stateKey;
-  const params = {};
-  headers.forEach((h,i)=>{
-    const inp = document.getElementById(prefix + '_' + i);
-    if(!inp) return;
-    let val = inp.value;
-    if(inp.type === 'date' && val) val = val.split('-').reverse().join('/');
-    if(val) params[h] = val;
+  if (markerRow === -1) return [];
+  var headerRowIdx = markerRow + 1;
+  var headers = vals[headerRowIdx] || [];
+  var activeCol = -1, codeCol = -1, descCol = -1, rateCol = -1;
+  headers.forEach(function (h, i) {
+    var hl = (h || '').toString().trim().toLowerCase();
+    if (hl === 'active') activeCol = i;
+    if (hl === 'code') codeCol = i;
+    if (hl === 'description') descCol = i;
+    if (hl === 'rate') rateCol = i;
   });
-  const resultEl = document.getElementById(stateKey + 'Result');
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const url = API_URL + '?action=' + action + '&' + qs + '&t=' + Date.now();
-    const res = await fetch(url); const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved — row ' + data.row + '</span>';
-      showToast('Saved');
-      headers.forEach((h,i)=>{ const inp = document.getElementById(prefix+'_'+i); if(inp) inp.value=''; });
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-function renderGenericTable(stateKey, headEl, bodyEl){
-  const t = state[stateKey] || { headers:[], rows:[] };
-  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
-  document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(-200).reverse().map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
-  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No entries yet</td></tr>`;
-}
-
-function renderExpenses(){ buildGenericForm('expenseFormFields', (state.expenses||{}).headers, 'expenses'); renderGenericTable('expenses','expensesTableHead','expensesTableBody'); }
-function renderClients(){ buildGenericForm('clientsFormFields', (state.clients||{}).headers, 'clients'); renderGenericTable('clients','clientsTableHead','clientsTableBody'); }
-function renderPurchases(){ buildGenericForm('purchasesFormFields', (state.purchases||{}).headers, 'purchases'); renderGenericTable('purchases','purchasesTableHead','purchasesTableBody'); }
-function renderReferrals(){ buildGenericForm('referralsFormFields', (state.referrals||{}).headers, 'referrals'); renderGenericTable('referrals','referralsTableHead','referralsTableBody'); }
-
-// ---------- INVENTORY (read-only) ----------
-function renderInventory(){
-  const t = state.inventory || { headers:[], rows:[] };
-  document.getElementById('inventoryTableHead').innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
-  const q = (document.getElementById('inventorySearch').value||'').toLowerCase();
-  const rows = (t.rows||[]).filter(r=> !q || Object.values(r).some(v=>(v||'').toString().toLowerCase().includes(q)));
-  document.getElementById('inventoryTableBody').innerHTML = rows.length ? rows.slice(0,300).map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
-  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No matching items</td></tr>`;
-}
-
-// ---------- DEBTORS & CREDITORS ----------
-function renderDebtorsCreditors(){
-  const dc = state.debtorsCreditors || {};
-  renderDCTable('debtors', dc.debtors, 'debtorsSummaryChips', 'debtorsTableBody');
-  renderDCTable('creditors', dc.creditors, 'creditorsSummaryChips', 'creditorsTableBody');
-}
-function renderDCTable(kind, table, chipsEl, bodyEl){
-  table = table || { rows:[], summary:{totalOwed:0,totalPaid:0,totalBalance:0,overdueCount:0} };
-  const s = table.summary || {totalOwed:0,totalPaid:0,totalBalance:0,overdueCount:0};
-  document.getElementById(chipsEl).innerHTML = `
-    <div class="summary-chip"><div class="summary-chip-label">Total ${kind==='debtors'?'Owed':'Owed'}</div><div class="summary-chip-value">${fmtMoney(s.totalOwed)}</div></div>
-    <div class="summary-chip blue"><div class="summary-chip-label">Paid</div><div class="summary-chip-value">${fmtMoney(s.totalPaid)}</div></div>
-    <div class="summary-chip ${s.totalBalance>0?'amber':''}"><div class="summary-chip-label">Balance</div><div class="summary-chip-value">${fmtMoney(s.totalBalance)}</div></div>
-    <div class="summary-chip ${s.overdueCount>0?'coral':''}"><div class="summary-chip-label">Overdue</div><div class="summary-chip-value">${s.overdueCount}</div></div>
-  `;
-  const rows = table.rows || [];
-  document.getElementById(bodyEl).innerHTML = rows.length ? rows.map(r=>{
-    const statusBadge = r.balance <= 0 ? '<span class="badge cleared">Cleared</span>' : (r.daysOverdue>0 ? '<span class="badge overdue">Overdue</span>' : '<span class="badge pending">Pending</span>');
-    const actionBtn = r.balance>0
-      ? `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="markCleared('${kind}',${r.row},${r.amountOwed})">Mark cleared</button>`
-      : `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="archiveOne('${kind}',${r.row},'${(r.name||'').replace(/'/g,"\\'")}')">Archive</button>`;
-    return `<tr><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td class="mono">${fmtMoney(r.balance)}</td><td>${statusBadge}</td>
-      <td>${actionBtn}</td></tr>`;
-  }).join('') : '<tr><td colspan="6" class="empty">Nothing here yet</td></tr>';
-}
-async function submitDebtorCreditor(kind){
-  const p = kind === 'debtor' ? 'debtor' : 'creditor';
-  const action = kind === 'debtor' ? 'addDebtor' : 'addCreditor';
-  const name = document.getElementById(p+'Name').value.trim();
-  const contact = document.getElementById(p+'Contact').value.trim();
-  const amountOwed = document.getElementById(p+'AmountOwed').value;
-  const amountPaid = document.getElementById(p+'AmountPaid').value || '0';
-  const invoiceDate = document.getElementById(p+'InvoiceDate').value;
-  const dueDate = document.getElementById(p+'DueDate').value;
-  const paymentMethod = document.getElementById(p+'PaymentMethod').value;
-  const notes = document.getElementById(p+'Notes').value.trim();
-  const resultEl = document.getElementById(p+'Result');
-  if(!name || !amountOwed){ resultEl.innerHTML = '<span style="color:var(--coral)">Name and amount owed are required.</span>'; return; }
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const url = API_URL + '?action=' + action + '&name=' + encodeURIComponent(name) + '&contact=' + encodeURIComponent(contact)
-      + '&amountOwed=' + encodeURIComponent(amountOwed) + '&amountPaid=' + encodeURIComponent(amountPaid)
-      + '&invoiceDate=' + encodeURIComponent(invoiceDate ? invoiceDate.split('-').reverse().join('/') : '')
-      + '&dueDate=' + encodeURIComponent(dueDate ? dueDate.split('-').reverse().join('/') : '')
-      + '&paymentMethod=' + encodeURIComponent(paymentMethod) + '&notes=' + encodeURIComponent(notes) + '&t=' + Date.now();
-    const res = await fetch(url); const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
-      showToast((kind==='debtor'?'Debtor':'Creditor') + ' added');
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function markCleared(kind, row, amountOwed){
-  try{
-    const url = API_URL + '?action=markCleared&row=' + row + '&amountPaid=' + amountOwed + '&table=' + kind + '&t=' + Date.now();
-    await fetch(url);
-    showToast('Marked cleared');
-    loadData();
-  }catch(e){ showToast('Connection error'); }
-}
-async function archiveOne(kind, row, name){
-  try{
-    const url = API_URL + '?action=archiveDC&row=' + row + '&table=' + kind + '&reason=' + encodeURIComponent('Archived from dashboard') + '&t=' + Date.now();
-    await fetch(url);
-    showToast(name + ' archived');
-    loadData();
-  }catch(e){ showToast('Connection error'); }
-}
-async function sweepArchive(){
-  const el = document.getElementById('sweepResult');
-  el.innerHTML = '<span style="color:var(--ink-dim)">Sweeping...</span>';
-  try{
-    const res = await fetch(API_URL + '?action=sweepArchiveDC&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' account(s) archived</span>'; showToast('Archive swept'); loadData(); }
-    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
-  }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-
-// ---------- CALLS & MESSAGES ----------
-async function submitCall(){
-  const business = document.getElementById('callBusiness').value.trim();
-  const resultEl = document.getElementById('callResult');
-  if(!business){ resultEl.innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
-  const params = { business: business, number: document.getElementById('callNumber').value.trim(), notes: document.getElementById('callNotes').value.trim(),
-    nextAction: document.getElementById('callNextAction').value.trim(),
-    nextFollowUp: document.getElementById('callNextFollowUp').value ? document.getElementById('callNextFollowUp').value.split('-').reverse().join('/') : '' };
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['callBusiness','callNumber','callNotes','callNextAction','callNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function submitMessage(){
-  const business = document.getElementById('msgBusiness').value.trim();
-  const resultEl = document.getElementById('msgResult');
-  if(!business){ resultEl.innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
-  const params = { business: business, channel: document.getElementById('msgChannel').value, summary: document.getElementById('msgSummary').value.trim() };
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['msgBusiness','msgSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-function renderCallsMessages(){
-  const cm = state.callsMessages || { calls: [], messages: [] };
-  const calls = cm.calls || [];
-  document.getElementById('callsTableBody').innerHTML = calls.length ? calls.map(c=>
-    `<tr><td>${c.date||''}</td><td>${c.business||''}</td><td>${c.number||''}</td><td>${c.notes||''}</td><td>${c.nextAction||''}</td><td>${c.nextFollowUp||''}</td></tr>`
-  ).join('') : '<tr><td colspan="6" class="empty">No calls logged yet</td></tr>';
-  const messages = cm.messages || [];
-  document.getElementById('messagesTableBody').innerHTML = messages.length ? messages.map(m=>
-    `<tr><td>${m.date||''}</td><td>${m.business||''}</td><td>${m.channel||''}</td><td>${m.summary||''}</td></tr>`
-  ).join('') : '<tr><td colspan="4" class="empty">No messages logged yet</td></tr>';
-}
-
-// ---------- ARCHIVE (Debtors/Creditors) ----------
-function renderArchive(){
-  const arch = state.archive || { rows: [] };
-  document.getElementById('archiveCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
-  renderArchiveFiltered();
-}
-function renderArchiveFiltered(){
-  const arch = state.archive || { rows: [] };
-  const q = (document.getElementById('archiveSearch').value||'').toLowerCase();
-  const rows = (arch.rows||[]).filter(r=> !q || (r.name||'').toLowerCase().includes(q));
-  document.getElementById('archiveTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.archivedDate}</td><td><span class="badge blue">${r.type}</span></td><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td>${r.reason}</td>
-      <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchived(${r.row})">Restore</button></td></tr>`
-  ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
-}
-async function restoreArchived(row){
-  try{
-    const res = await fetch(API_URL + '?action=restoreDC&row=' + row + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ showToast('Restored to live table'); loadData(); }
-    else showToast(data.error || 'Could not restore');
-  }catch(e){ showToast('Connection error'); }
-}
-
-// ---------- ARCHIVE (Sales) ----------
-function renderArchiveSales(){
-  const arch = state.archiveSales || { rows: [] };
-  document.getElementById('archiveSalesCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
-  const rows = arch.rows || [];
-  document.getElementById('archiveSalesTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.archivedDate}</td><td>${r.date}</td><td>${r.customer}</td><td>${r.product}</td><td>${r.qty}</td><td class="mono">${fmtMoney(r.revenue)}</td>
-      <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchivedSale(${r.row})">Restore</button></td></tr>`
-  ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
-}
-async function sweepArchiveSales(){
-  const months = document.getElementById('sweepSalesMonths').value || '12';
-  const el = document.getElementById('sweepSalesResult');
-  el.innerHTML = '<span style="color:var(--ink-dim)">Sweeping...</span>';
-  try{
-    const res = await fetch(API_URL + '?action=sweepArchiveSales&months=' + encodeURIComponent(months) + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' sale(s) archived</span>'; showToast('Sales archive swept'); loadData(); }
-    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
-  }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function restoreArchivedSale(row){
-  try{
-    const res = await fetch(API_URL + '?action=restoreArchiveSale&row=' + row + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ showToast('Restored to Daily Sales'); loadData(); }
-    else showToast(data.error || 'Could not restore');
-  }catch(e){ showToast('Connection error'); }
-}
-
-// ---------- AI ASSISTANT ----------
-function buildDashboardContext(){
-  const rev = state.revenue || {};
-  const fu = state.followUps || { items: [] };
-  const health = state.clientHealth || { counts: {} };
-  const dc = state.debtorsCreditors || {};
-  const overdueFu = (fu.items||[]).filter(i=>i.daysUntil!==null && i.daysUntil<0).slice(0,8).map(i=>`${i.name} (${i.kind}: ${i.detail})`).join('; ');
-  return [
-    `Monthly revenue: GHS ${Math.round(rev.monthlyActual||0)} of GHS ${Math.round(rev.monthlyTarget||0)} target (pace ${(rev.pacePct||0).toFixed(0)}%).`,
-    `Client reorder pipeline: ${health.counts && health.counts.active||0} active, ${health.counts && health.counts.due||0} due, ${health.counts && health.counts.overdue||0} overdue, ${health.counts && health.counts.dormant||0} dormant.`,
-    `Owed to business: GHS ${Math.round((dc.debtors && dc.debtors.summary && dc.debtors.summary.totalBalance)||0)}. Business owes: GHS ${Math.round((dc.creditors && dc.creditors.summary && dc.creditors.summary.totalBalance)||0)}.`,
-    overdueFu ? `Overdue follow-ups: ${overdueFu}` : 'No overdue follow-ups right now.'
-  ].join('\\n');
-}
-function renderChatLog(){
-  const log = document.getElementById('chatLog');
-  log.innerHTML = chatHistory.map(m=>
-    `<div class="chat-msg ${m.role==='user'?'user':'assistant'}"><div class="bubble">${(m.content||'').toString().replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`
-  ).join('');
-  log.scrollTop = log.scrollHeight;
-}
-async function sendChat(){
-  const input = document.getElementById('chatInput');
-  const question = input.value.trim();
-  if(!question) return;
-  const btn = document.getElementById('chatSendBtn');
-  chatHistory.push({ role: 'user', content: question });
-  renderChatLog();
-  input.value = '';
-  btn.disabled = true; btn.textContent = 'Thinking...';
-  try{
-    const context = buildDashboardContext();
-    const url = API_URL + '?action=aiAsk&question=' + encodeURIComponent(question)
-      + '&history=' + encodeURIComponent(JSON.stringify(chatHistory))
-      + '&context=' + encodeURIComponent(context) + '&t=' + Date.now();
-    const res = await fetch(url);
-    const data = await res.json();
-    if(data.success){
-      chatHistory.push({ role: 'assistant', content: data.reply });
-    } else {
-      chatHistory.push({ role: 'assistant', content: 'Error: ' + (data.error||'could not reach the assistant.') });
-    }
-  }catch(e){
-    chatHistory.push({ role: 'assistant', content: 'Connection error — check the API_URL and try again.' });
+  if (codeCol === -1) return [];
+  var codes = [];
+  for (var r2 = headerRowIdx + 1; r2 < vals.length; r2++) {
+    var row = vals[r2];
+    var codeVal = (row[codeCol] || '').toString().trim();
+    if (!codeVal) { if (codes.length > 0) break; else continue; }
+    var activeVal = activeCol >= 0 ? (row[activeCol] || '').toString().trim().toLowerCase() : '';
+    var rateVal = rateCol >= 0 ? parseFloat((row[rateCol] || '0').toString().replace('%', '')) : 0;
+    codes.push({ code: codeVal, description: descCol >= 0 ? row[descCol] : '', rate: rateVal, active: activeVal === 'yes' });
+    if (codes.length > 30) break;
   }
-  btn.disabled = false; btn.textContent = 'Send';
-  renderChatLog();
+  return codes;
 }
 
-// ---------- SETUP: identity + theme ----------
-async function saveSetup(){
-  const resultEl = document.getElementById('setupResult');
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  const s = state.settings || {};
-  const params = {
-    business_name: document.getElementById('setupBusinessName').value.trim(),
-    industry: document.getElementById('setupIndustry').value.trim(),
-    primary_color: s.primary_color || '#0d6e63',
-    secondary_color: s.secondary_color || '#2f6fa3',
-    alert_color: s.alert_color || '#b3402f',
-    branding_enabled: document.getElementById('setupBrandingEnabled').checked ? 'true' : 'false'
+// =====================
+// SALES ARCHIVE
+// =====================
+function sweepArchiveSalesGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DAILY_SALES');
+    if (!sheet) return jsonResponse({ error: 'DAILY_SALES not found' });
+    var utils = ensureUtilitySheets(ss);
+    var monthsBack = parseInt(e.parameter.months, 10) || 12;
+    var cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - monthsBack);
+    var rows = getDailySalesRaw();
+    var archivedCount = 0;
+    var rowsToDelete = [];
+    var todayStr = fmtDateKey(new Date());
+
+    rows.forEach(function (r) {
+      var d = parseDateFlex(r.date);
+      if (d && d < cutoff) {
+        utils.archiveSales.appendRow([todayStr, r.date, r.customer, r.stockCode, r.product, r.qty, r.revenue, r.grossProfit, 'Sweep archive — older than ' + monthsBack + ' months']);
+        rowsToDelete.push(r.row);
+        archivedCount++;
+      }
+    });
+    rowsToDelete.sort(function (a, b) { return b - a; });
+    rowsToDelete.forEach(function (r) { sheet.deleteRow(r); });
+
+    try { if (archivedCount > 0) logActivity('DAILY_SALES', '', 'sweep_archive', '', archivedCount + ' row(s)', 'Swept sales older than ' + monthsBack + ' months'); } catch (le) {}
+    return jsonResponse({ success: true, archived: archivedCount });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+function restoreArchiveSaleGET(e) {
+  try {
+    var ss = getMainSS();
+    var utils = ensureUtilitySheets(ss);
+    var archRow = parseInt(e.parameter.row, 10);
+    var data = utils.archiveSales.getDataRange().getValues();
+    if (!archRow || archRow < 2 || archRow > data.length) return jsonResponse({ error: 'Invalid archive row' });
+    var r = data[archRow - 1];
+
+    var sheet = ss.getSheetByName('DAILY_SALES');
+    var targetRow = sheet.getLastRow() + 1;
+    sheet.getRange(targetRow, DS_COLS.date).setValue(r[1]);
+    sheet.getRange(targetRow, DS_COLS.customer).setValue(r[2]);
+    sheet.getRange(targetRow, DS_COLS.stockCode).setValue(r[3]);
+    sheet.getRange(targetRow, DS_COLS.product).setValue(r[4]);
+    sheet.getRange(targetRow, DS_COLS.qty).setValue(r[5]);
+    sheet.getRange(targetRow, DS_COLS.revenue).setValue(r[6]);
+    sheet.getRange(targetRow, DS_COLS.grossProfit).setValue(r[7]);
+
+    utils.archiveSales.deleteRow(archRow);
+    try { logActivity('DAILY_SALES', r[2], 'restored', 'Archived', 'Active', 'Restored from sales archive'); } catch (le) {}
+    return jsonResponse({ success: true });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+function getArchiveSalesData() {
+  var ss = getMainSS();
+  var utils = ensureUtilitySheets(ss);
+  var data = utils.archiveSales.getDataRange().getValues();
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    if (!r[1]) continue;
+    rows.push({
+      row: i + 1, archivedDate: r[0] || '', date: r[1] || '', customer: r[2] || '', stockCode: r[3] || '',
+      product: r[4] || '', qty: r[5] || '', revenue: parseFloat(r[6]) || 0, grossProfit: parseFloat(r[7]) || 0, reason: r[8] || ''
+    });
+  }
+  return { rows: rows.reverse(), count: rows.length };
+}
+
+// =====================
+// CLIENT REORDER HEALTH
+// =====================
+function getClientHealthData() {
+  var rows = getDailySalesRaw();
+  var lastOrderByCustomer = {};
+  var revenueByCustomer = {};
+  rows.forEach(function (r) {
+    var cust = (r.customer || '').toString().trim();
+    if (!cust) return;
+    var d = parseDateFlex(r.date);
+    revenueByCustomer[cust] = (revenueByCustomer[cust] || 0) + r.revenue;
+    if (!d) return;
+    if (!lastOrderByCustomer[cust] || d > lastOrderByCustomer[cust]) lastOrderByCustomer[cust] = d;
+  });
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var health = Object.keys(lastOrderByCustomer).map(function (cust) {
+    var d = lastOrderByCustomer[cust];
+    var days = Math.floor((today.getTime() - d.getTime()) / 86400000);
+    var status, label;
+    if (days <= 30) { status = 'active'; label = '🟢 Active'; }
+    else if (days <= 60) { status = 'due'; label = '🟡 Due for reorder'; }
+    else if (days <= 120) { status = 'overdue'; label = '🔴 Overdue reorder'; }
+    else { status = 'dormant'; label = '⚫ Dormant'; }
+    return { customer: cust, lastOrder: fmtDateKey(d), daysSince: days, status: status, label: label, totalRevenue: revenueByCustomer[cust] || 0 };
+  });
+  health.sort(function (a, b) { return b.daysSince - a.daysSince; });
+  var counts = { active: 0, due: 0, overdue: 0, dormant: 0 };
+  health.forEach(function (h) { counts[h.status] = (counts[h.status] || 0) + 1; });
+  return { rows: health, counts: counts };
+}
+
+// =====================
+// DEBTORS_CREDITORS
+// =====================
+function findTableBounds(sheet, summaryLabelText) {
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  var colValues = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  var summaryRow = -1;
+  for (var r = 0; r < lastRow; r++) {
+    if (colValues[r].some(function (v) { return (v || '').toString().trim() === summaryLabelText; })) { summaryRow = r + 1; break; }
+  }
+  if (summaryRow === -1) return null;
+  var headerRow = -1;
+  for (var r = summaryRow - 1; r >= 1; r--) {
+    var rowText = sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0].join(' ').toLowerCase();
+    if (rowText.indexOf('contact') !== -1 || rowText.indexOf('supplier') !== -1 || rowText.indexOf('client') !== -1 ||
+        rowText.indexOf('debtor') !== -1 || rowText.indexOf('due date') !== -1) { headerRow = r; break; }
+  }
+  if (headerRow === -1) return null;
+  return { headerRow: headerRow, firstDataRow: headerRow + 1, summaryRow: summaryRow, lastCol: lastCol };
+}
+
+function readDebtorCreditorTable(sheet, summaryLabelText) {
+  // v4.4: this used to be called 6x per getData() (2x from
+  // debtorsCreditors, 2x from followUps, 2x from tracker's aging), each
+  // doing a full re-read of the whole DEBTORS_CREDITORS sheet. Now
+  // computed once per summary section (debtors / creditors) and reused
+  // for the rest of this request.
+  var c = reqCache();
+  c.dcTables = c.dcTables || {};
+  if (c.dcTables[summaryLabelText]) return c.dcTables[summaryLabelText];
+
+  var bounds = findTableBounds(sheet, summaryLabelText);
+  if (!bounds) {
+    var errResult = { rows: [], summary: null, error: 'Could not find ' + summaryLabelText };
+    c.dcTables[summaryLabelText] = errResult;
+    return errResult;
+  }
+  var headers = sheet.getRange(bounds.headerRow, 1, 1, bounds.lastCol).getDisplayValues()[0];
+  var numRows = bounds.summaryRow - bounds.firstDataRow;
+  var data = numRows > 0 ? sheet.getRange(bounds.firstDataRow, 1, numRows, bounds.lastCol).getDisplayValues() : [];
+  var rows = [];
+  var nameCol = findCol(headers, ['supplier', 'vendor', 'client', 'debtor', 'customer', 'name']);
+  var contactCol = findCol(headers, ['contact']);
+  var invoiceDateCol = findCol(headers, ['invoice date']);
+  var dueDateCol = findCol(headers, ['due date']);
+  var amountOwedCol = findCol(headers, ['amount owed']);
+  var amountPaidCol = findCol(headers, ['amount paid']);
+  var balanceCol = findCol(headers, ['balance']);
+  var overdueCol = findCol(headers, ['days overdue', 'overdue']);
+  var statusCol = findCol(headers, ['status']);
+  var notesCol = findCol(headers, ['notes']);
+  var paymentMethodCol = findCol(headers, ['payment method']);
+
+  var totalOwed = 0, totalPaid = 0, totalBalance = 0, overdueCount = 0;
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var name = nameCol > 0 ? r[nameCol - 1] : '';
+    if (!name) continue;
+    var owed = parseFloat((r[amountOwedCol - 1] || '0').toString().replace(/,/g, '')) || 0;
+    var paid = parseFloat((r[amountPaidCol - 1] || '0').toString().replace(/,/g, '')) || 0;
+    var balance = balanceCol > 0 ? (parseFloat((r[balanceCol - 1] || '0').toString().replace(/,/g, '')) || 0) : (owed - paid);
+    var overdueDays = overdueCol > 0 ? (parseInt(r[overdueCol - 1], 10) || 0) : 0;
+    var status = statusCol > 0 ? r[statusCol - 1] : '';
+    var dueDateRaw = dueDateCol > 0 ? r[dueDateCol - 1] : '';
+    totalOwed += owed; totalPaid += paid; totalBalance += balance;
+    if (overdueDays > 0 && balance > 0) overdueCount++;
+    rows.push({
+      row: bounds.firstDataRow + i, name: name, contact: contactCol > 0 ? r[contactCol - 1] : '',
+      invoiceDate: invoiceDateCol > 0 ? r[invoiceDateCol - 1] : '', dueDate: dueDateRaw,
+      amountOwed: owed, amountPaid: paid, balance: balance, daysOverdue: overdueDays, status: status,
+      notes: notesCol > 0 ? r[notesCol - 1] : '', paymentMethod: paymentMethodCol > 0 ? r[paymentMethodCol - 1] : ''
+    });
+  }
+  var result = {
+    rows: rows, headerRow: bounds.headerRow, firstDataRow: bounds.firstDataRow, summaryRow: bounds.summaryRow,
+    cols: { name: nameCol, contact: contactCol, invoiceDate: invoiceDateCol, dueDate: dueDateCol, amountOwed: amountOwedCol,
+      amountPaid: amountPaidCol, balance: balanceCol, overdue: overdueCol, status: statusCol, notes: notesCol, paymentMethod: paymentMethodCol },
+    summary: { totalOwed: totalOwed, totalPaid: totalPaid, totalBalance: totalBalance, overdueCount: overdueCount, count: rows.length }
   };
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=saveSettings&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
-      showToast('Settings saved');
-      state.settings = data.settings;
-      applySettings();
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+  c.dcTables[summaryLabelText] = result;
+  return result;
 }
 
-// ---------- SETUP: v4.0 revenue targets & expense budgets ----------
-function renderTargets(){
-  const s = state.settings || {};
-  document.getElementById('targetDaily').value = s.daily_revenue_target || '0';
-  document.getElementById('targetWeekly').value = s.weekly_revenue_target || '0';
-  document.getElementById('targetMonthly').value = s.monthly_target || '0';
-  document.getElementById('targetAnnual').value = s.annual_revenue_target || '0';
-  document.getElementById('setupWorkingDays').value = s.working_days || '26';
-  document.getElementById('budgetDaily').value = s.daily_expense_budget || '0';
-  document.getElementById('budgetWeekly').value = s.weekly_expense_budget || '0';
-  document.getElementById('budgetMonthly').value = s.monthly_expense_budget || '0';
-  document.getElementById('budgetAnnual').value = s.annual_expense_budget || '0';
-}
-async function saveTargets(){
-  const resultEl = document.getElementById('targetsResult');
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  const params = {
-    daily_revenue_target: document.getElementById('targetDaily').value || '0',
-    weekly_revenue_target: document.getElementById('targetWeekly').value || '0',
-    monthly_target: document.getElementById('targetMonthly').value || '0',
-    annual_revenue_target: document.getElementById('targetAnnual').value || '0',
-    working_days: document.getElementById('setupWorkingDays').value || '26',
-    daily_expense_budget: document.getElementById('budgetDaily').value || '0',
-    weekly_expense_budget: document.getElementById('budgetWeekly').value || '0',
-    monthly_expense_budget: document.getElementById('budgetMonthly').value || '0',
-    annual_expense_budget: document.getElementById('budgetAnnual').value || '0'
+function getDebtorsCreditorsData() {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+  if (!sheet) return { debtors: { rows: [], summary: null }, creditors: { rows: [], summary: null }, error: 'DEBTORS_CREDITORS not found' };
+  return {
+    debtors: readDebtorCreditorTable(sheet, 'DEBTORS SUMMARY'),
+    creditors: readDebtorCreditorTable(sheet, 'CREDITORS SUMMARY')
   };
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=saveSettings&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
-      showToast('Targets saved');
-      state.settings = data.settings;
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
-// ---------- SETUP: v4.0 product catalog / categories / units ----------
-function renderCatalogFormOptions(){
-  const catSel = document.getElementById('catCategory');
-  const cats = state.setupCategories || [];
-  catSel.innerHTML = '<option value="">—</option>' + cats.map(c=>`<option>${c}</option>`).join('');
-  const unitSel = document.getElementById('catUnit');
-  const units = state.units || [];
-  unitSel.innerHTML = '<option value="">—</option>' + units.map(u=>`<option>${u}</option>`).join('');
+function addDebtorCreditorGET(e, summaryLabelText) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+    if (!sheet) return jsonResponse({ error: 'DEBTORS_CREDITORS not found' });
+    var table = readDebtorCreditorTable(sheet, summaryLabelText);
+    if (table.error) return jsonResponse({ error: table.error });
+
+    var name = (e.parameter.name || '').toString().trim();
+    var amountOwed = parseFloat(e.parameter.amountOwed);
+    if (!name) return jsonResponse({ error: 'Name is required' });
+    if (isNaN(amountOwed) || amountOwed <= 0) return jsonResponse({ error: 'Amount owed must be greater than zero' });
+
+    var targetRow = -1;
+    for (var r = table.firstDataRow; r < table.summaryRow; r++) {
+      var nameVal = table.cols.name > 0 ? sheet.getRange(r, table.cols.name).getDisplayValue() : '';
+      if (!nameVal) { targetRow = r; break; }
+    }
+    if (targetRow === -1) return jsonResponse({ error: 'Table is full (no blank row before the summary). Extend it first.' });
+
+    var contact = e.parameter.contact || '';
+    var invoiceDate = e.parameter.invoiceDate || fmtDateKey(new Date());
+    var dueDate = e.parameter.dueDate || '';
+    var amountPaid = parseFloat(e.parameter.amountPaid) || 0;
+    var notes = e.parameter.notes || '';
+    var paymentMethod = e.parameter.paymentMethod || '';
+
+    if (table.cols.name > 0) sheet.getRange(targetRow, table.cols.name).setValue(name);
+    if (table.cols.contact > 0) sheet.getRange(targetRow, table.cols.contact).setValue(contact);
+    if (table.cols.invoiceDate > 0) sheet.getRange(targetRow, table.cols.invoiceDate).setValue(invoiceDate);
+    if (table.cols.dueDate > 0 && dueDate) sheet.getRange(targetRow, table.cols.dueDate).setValue(dueDate);
+    if (table.cols.amountOwed > 0) sheet.getRange(targetRow, table.cols.amountOwed).setValue(amountOwed);
+    if (table.cols.amountPaid > 0) sheet.getRange(targetRow, table.cols.amountPaid).setValue(amountPaid);
+    if (table.cols.notes > 0 && notes) sheet.getRange(targetRow, table.cols.notes).setValue(notes);
+    if (table.cols.paymentMethod > 0 && paymentMethod) sheet.getRange(targetRow, table.cols.paymentMethod).setValue(paymentMethod);
+
+    try { logActivity('DEBTORS_CREDITORS', name, (summaryLabelText.indexOf('CREDITORS') !== -1 ? 'creditor_added' : 'debtor_added'), '', 'GHS ' + amountOwed, notes || 'Added via dashboard'); } catch (le) {}
+    return jsonResponse({ success: true, row: targetRow });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
 }
-function renderCategoryChips(){
-  const cats = state.setupCategories || [];
-  document.getElementById('categoryChips').innerHTML = cats.length ? cats.map(c=>`<span class="chip">${c}</span>`).join('') : '<span class="section-note">No categories found yet</span>';
+
+function markClearedGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+    var row = parseInt(e.parameter.row, 10);
+    var amountPaid = parseFloat(e.parameter.amountPaid);
+    var summaryLabelText = e.parameter.table === 'creditors' ? 'CREDITORS SUMMARY' : 'DEBTORS SUMMARY';
+    var table = readDebtorCreditorTable(sheet, summaryLabelText);
+    if (!row || row < table.firstDataRow || row >= table.summaryRow) return jsonResponse({ error: 'Invalid row' });
+    var nameForLog = '';
+    for (var i = 0; i < table.rows.length; i++) { if (table.rows[i].row === row) { nameForLog = table.rows[i].name; break; } }
+    if (!isNaN(amountPaid) && table.cols.amountPaid > 0) sheet.getRange(row, table.cols.amountPaid).setValue(amountPaid);
+    if (table.cols.status > 0) sheet.getRange(row, table.cols.status).setValue('Cleared');
+    try { logActivity('DEBTORS_CREDITORS', nameForLog, 'marked_cleared', 'Pending', 'Cleared', 'Amount paid: GHS ' + (isNaN(amountPaid) ? '' : amountPaid)); } catch (le) {}
+    return jsonResponse({ success: true });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
 }
-function renderUnitChips(){
-  const units = state.units || [];
-  document.getElementById('unitChips').innerHTML = units.length ? units.map(u=>`<span class="chip">${u}</span>`).join('') : '<span class="section-note">No units yet</span>';
+
+// =====================
+// ARCHIVE (Debtors/Creditors)
+// =====================
+function archiveDCGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+    var row = parseInt(e.parameter.row, 10);
+    var type = e.parameter.table === 'creditors' ? 'Creditor' : 'Debtor';
+    var summaryLabelText = type === 'Creditor' ? 'CREDITORS SUMMARY' : 'DEBTORS SUMMARY';
+    var table = readDebtorCreditorTable(sheet, summaryLabelText);
+    if (!row || row < table.firstDataRow || row >= table.summaryRow) return jsonResponse({ error: 'Invalid row' });
+
+    var match = null;
+    for (var i = 0; i < table.rows.length; i++) { if (table.rows[i].row === row) { match = table.rows[i]; break; } }
+    if (!match) return jsonResponse({ error: 'Row not found in table' });
+
+    var utils = ensureUtilitySheets(ss);
+    utils.archiveDC.appendRow([
+      fmtDateKey(new Date()), type, match.name, match.contact, match.invoiceDate, match.dueDate,
+      match.amountOwed, match.amountPaid, match.balance, match.notes, match.paymentMethod,
+      e.parameter.reason || 'Archived from dashboard'
+    ]);
+    sheet.deleteRow(row);
+    try { logActivity('DEBTORS_CREDITORS', match.name, 'archived', 'Active', 'Archived', e.parameter.reason || 'Archived from dashboard'); } catch (le) {}
+    return jsonResponse({ success: true, archived: match.name });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
 }
-function renderCatalogTable(){
-  const catalog = state.setupCatalog || { rows: [] };
-  const rows = catalog.rows || [];
-  document.getElementById('catalogTableBody').innerHTML = rows.length ? rows.map(r=>`
-    <tr>
-      <td>${r.stockCode||''}</td>
-      <td>${r.name||''}</td>
-      <td class="mono">${r.unitCost||''}</td>
-      <td class="mono">${r.previousUnitCost||''}</td>
-      <td>${r.priceChangedDate||''}</td>
-      <td>
-        <div class="catalog-row-actions">
-          <input type="number" placeholder="New cost" style="width:90px" id="newcost_${r.sheetRow}">
-          <button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="submitCostUpdate(${r.sheetRow})">Update</button>
-        </div>
-      </td>
-    </tr>`).join('') : '<tr><td colspan="6" class="empty">No products found in SETUP catalog yet</td></tr>';
+
+function sweepArchiveDCGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+    if (!sheet) return jsonResponse({ error: 'DEBTORS_CREDITORS not found' });
+    var utils = ensureUtilitySheets(ss);
+    var archivedCount = 0;
+    var todayStr = fmtDateKey(new Date());
+
+    [{ label: 'DEBTORS SUMMARY', type: 'Debtor' }, { label: 'CREDITORS SUMMARY', type: 'Creditor' }].forEach(function (t) {
+      var table = readDebtorCreditorTable(sheet, t.label);
+      if (table.error) return;
+      var rowsToDelete = [];
+      table.rows.forEach(function (r) {
+        if (r.balance <= 0) {
+          utils.archiveDC.appendRow([todayStr, t.type, r.name, r.contact, r.invoiceDate, r.dueDate, r.amountOwed, r.amountPaid, r.balance, r.notes, r.paymentMethod, 'Sweep archive — cleared balance']);
+          rowsToDelete.push(r.row);
+          archivedCount++;
+        }
+      });
+      rowsToDelete.sort(function (a, b) { return b - a; });
+      rowsToDelete.forEach(function (r) { sheet.deleteRow(r); });
+    });
+
+    try { if (archivedCount > 0) logActivity('DEBTORS_CREDITORS', '', 'sweep_archive', '', archivedCount + ' account(s)', 'Swept cleared accounts'); } catch (le) {}
+    return jsonResponse({ success: true, archived: archivedCount });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
 }
-async function submitCatalogProduct(){
-  const name = document.getElementById('catName').value.trim();
-  const resultEl = document.getElementById('catalogResult');
-  if(!name){ resultEl.innerHTML = '<span style="color:var(--coral)">Product Name is required.</span>'; return; }
-  const params = {
-    stockCode: document.getElementById('catStockCode').value.trim(),
-    name: name,
-    category: document.getElementById('catCategory').value,
-    unit: document.getElementById('catUnit').value,
-    reorderLevel: document.getElementById('catReorder').value,
-    supplier: document.getElementById('catSupplier').value.trim(),
-    unitCost: document.getElementById('catUnitCost').value,
-    retailPrice: document.getElementById('catRetailPrice').value,
-    trackExpiry: document.getElementById('catTrackExpiry').value
+
+function restoreDCGET(e) {
+  try {
+    var ss = getMainSS();
+    var utils = ensureUtilitySheets(ss);
+    var archRow = parseInt(e.parameter.row, 10);
+    var data = utils.archiveDC.getDataRange().getValues();
+    if (!archRow || archRow < 2 || archRow > data.length) return jsonResponse({ error: 'Invalid archive row' });
+    var r = data[archRow - 1];
+    var type = r[1] || 'Debtor';
+    var summaryLabelText = type === 'Creditor' ? 'CREDITORS SUMMARY' : 'DEBTORS SUMMARY';
+    var sheet = ss.getSheetByName('DEBTORS_CREDITORS');
+    var table = readDebtorCreditorTable(sheet, summaryLabelText);
+    if (table.error) return jsonResponse({ error: table.error });
+
+    var targetRow = -1;
+    for (var rr = table.firstDataRow; rr < table.summaryRow; rr++) {
+      var nameVal = table.cols.name > 0 ? sheet.getRange(rr, table.cols.name).getDisplayValue() : '';
+      if (!nameVal) { targetRow = rr; break; }
+    }
+    if (targetRow === -1) return jsonResponse({ error: 'No blank row available to restore into — extend the table first.' });
+
+    if (table.cols.name > 0) sheet.getRange(targetRow, table.cols.name).setValue(r[2]);
+    if (table.cols.contact > 0) sheet.getRange(targetRow, table.cols.contact).setValue(r[3]);
+    if (table.cols.invoiceDate > 0) sheet.getRange(targetRow, table.cols.invoiceDate).setValue(r[4]);
+    if (table.cols.dueDate > 0) sheet.getRange(targetRow, table.cols.dueDate).setValue(r[5]);
+    if (table.cols.amountOwed > 0) sheet.getRange(targetRow, table.cols.amountOwed).setValue(r[6]);
+    if (table.cols.amountPaid > 0) sheet.getRange(targetRow, table.cols.amountPaid).setValue(r[7]);
+    if (table.cols.notes > 0) sheet.getRange(targetRow, table.cols.notes).setValue(r[9]);
+    if (table.cols.paymentMethod > 0) sheet.getRange(targetRow, table.cols.paymentMethod).setValue(r[10]);
+
+    utils.archiveDC.deleteRow(archRow);
+    try { logActivity('DEBTORS_CREDITORS', r[2], 'restored', 'Archived', 'Active', 'Restored from archive'); } catch (le) {}
+    return jsonResponse({ success: true });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+function getArchiveData() {
+  var ss = getMainSS();
+  var utils = ensureUtilitySheets(ss);
+  var data = utils.archiveDC.getDataRange().getValues();
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    if (!r[2]) continue;
+    rows.push({
+      row: i + 1, archivedDate: r[0] || '', type: r[1] || '', name: r[2] || '', contact: r[3] || '',
+      invoiceDate: r[4] || '', dueDate: r[5] || '', amountOwed: parseFloat(r[6]) || 0, amountPaid: parseFloat(r[7]) || 0,
+      balance: parseFloat(r[8]) || 0, notes: r[9] || '', paymentMethod: r[10] || '', reason: r[11] || ''
+    });
+  }
+  return { rows: rows.reverse(), count: rows.length };
+}
+
+// =====================
+// FOLLOW-UPS
+// =====================
+function getFollowUpsData() {
+  var ss = getMainSS();
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var items = [];
+
+  try {
+    var dc = getDebtorsCreditorsData();
+    (dc.debtors.rows || []).forEach(function (r) {
+      if (r.balance <= 0) return;
+      var d = parseDateFlex(r.dueDate);
+      var days = d ? Math.floor((d.getTime() - today.getTime()) / 86400000) : null;
+      if (days === null || days <= 3) {
+        items.push({ kind: 'Debtor payment', name: r.name, detail: 'GHS ' + r.balance.toFixed(2) + ' owed to you', dueDate: r.dueDate || '', daysUntil: days, source: 'debtor', row: r.row });
+      }
+    });
+    (dc.creditors.rows || []).forEach(function (r) {
+      if (r.balance <= 0) return;
+      var d = parseDateFlex(r.dueDate);
+      var days = d ? Math.floor((d.getTime() - today.getTime()) / 86400000) : null;
+      if (days === null || days <= 3) {
+        items.push({ kind: 'Creditor payment', name: r.name, detail: 'GHS ' + r.balance.toFixed(2) + ' you owe', dueDate: r.dueDate || '', daysUntil: days, source: 'creditor', row: r.row });
+      }
+    });
+  } catch (e2) { /* ignore */ }
+
+  try {
+    var utils = ensureUtilitySheets(ss);
+    var cData = utils.calls.getDataRange().getValues();
+    for (var i = 1; i < cData.length; i++) {
+      var r2 = cData[i];
+      if (!r2[6]) continue;
+      var d2 = parseDateFlex(r2[6]);
+      var days2 = d2 ? Math.floor((d2.getTime() - today.getTime()) / 86400000) : null;
+      if (days2 !== null && days2 <= 3) {
+        items.push({ kind: 'Call follow-up', name: r2[2] || '', detail: r2[5] || 'Follow up call', dueDate: r2[6] || '', daysUntil: days2, source: 'call', row: i + 1 });
+      }
+    }
+  } catch (e3) { /* ignore */ }
+
+  try {
+    var health = getClientHealthData();
+    (health.rows || []).forEach(function (h) {
+      if (h.status === 'overdue' || h.status === 'dormant') {
+        items.push({ kind: 'Reorder check-in', name: h.customer, detail: h.label + ' — last ordered ' + h.lastOrder, dueDate: '', daysUntil: -h.daysSince, source: 'clientHealth' });
+      }
+    });
+  } catch (e4) { /* ignore */ }
+
+  try {
+    var appts = getAppointments();
+    appts.forEach(function (a) {
+      var d3 = parseDateFlex(a.date);
+      var days3 = d3 ? Math.floor((d3.getTime() - today.getTime()) / 86400000) : null;
+      if (days3 !== null && days3 <= 3) {
+        items.push({ kind: 'Appointment', name: a.client || a.title, detail: a.title + (a.notes ? ' — ' + a.notes : ''), dueDate: a.date, daysUntil: days3, source: 'appointment', row: a.row });
+      }
+    });
+  } catch (e5) { /* ignore */ }
+
+  items.sort(function (a, b) {
+    var av = a.daysUntil === null ? 9999 : a.daysUntil;
+    var bv = b.daysUntil === null ? 9999 : b.daysUntil;
+    return av - bv;
+  });
+  var overdueCount = items.filter(function (i) { return i.daysUntil !== null && i.daysUntil < 0; }).length;
+  var dueTodayCount = items.filter(function (i) { return i.daysUntil === 0; }).length;
+  return { items: items, overdueCount: overdueCount, dueTodayCount: dueTodayCount, total: items.length };
+}
+
+// =====================
+// REVENUE
+// =====================
+function getRevenueData() {
+  var settings = getSettings();
+  var monthlyTarget = parseFloat(settings.monthly_target) || 0;
+  var workingDays = parseFloat(settings.working_days) || 26;
+  var dailyTarget = workingDays > 0 ? monthlyTarget / workingDays : 0;
+
+  var rows = getDailySalesRaw();
+  var now = new Date();
+  var todayStr = fmtDateKey(now);
+  var startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
+  var startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  var dailyActual = 0, weeklyActual = 0, monthlyActual = 0, monthlyProfit = 0;
+  rows.forEach(function (r) {
+    var d = parseDateFlex(r.date);
+    if (!d) return;
+    if (r.date === todayStr) dailyActual += r.revenue;
+    if (d >= startOfWeek) weeklyActual += r.revenue;
+    if (d >= startOfMonth) { monthlyActual += r.revenue; monthlyProfit += r.grossProfit; }
+  });
+
+  var weeklyTarget = parseFloat(settings.weekly_revenue_target) || (dailyTarget * 6);
+  var gapToTarget = Math.max(0, monthlyTarget - monthlyActual);
+  var dayOfMonth = now.getDate();
+  var daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  var expectedByNow = monthlyTarget * (dayOfMonth / daysInMonth);
+  var pace = expectedByNow > 0 ? (monthlyActual / expectedByNow) * 100 : 0;
+
+  return {
+    dailyTarget: dailyTarget, weeklyTarget: weeklyTarget, monthlyTarget: monthlyTarget,
+    dailyActual: dailyActual, weeklyActual: weeklyActual, monthlyActual: monthlyActual, monthlyProfit: monthlyProfit,
+    gapToTarget: gapToTarget, pacePct: pace, workingDays: workingDays
   };
-  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
-  try{
-    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
-    const res = await fetch(API_URL + '?action=addSetupProduct&' + qs + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){
-      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Product added</span>';
-      showToast('Product added to catalog');
-      ['catStockCode','catName','catReorder','catSupplier','catUnitCost','catRetailPrice'].forEach(id=>document.getElementById(id).value='');
-      loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
-  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
-}
-async function submitCostUpdate(sheetRow){
-  const input = document.getElementById('newcost_'+sheetRow);
-  const newCost = input.value;
-  if(!newCost){ showToast('Enter a new cost first'); return; }
-  try{
-    const res = await fetch(API_URL + '?action=updateSetupCost&sheetRow=' + sheetRow + '&newUnitCost=' + encodeURIComponent(newCost) + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ showToast('Cost updated — previous cost saved'); loadData(); }
-    else showToast(data.error || 'Could not update');
-  }catch(e){ showToast('Connection error'); }
-}
-async function submitNewCategory(){
-  const input = document.getElementById('newCategoryInput');
-  const val = input.value.trim();
-  if(!val) return;
-  try{
-    const res = await fetch(API_URL + '?action=addSetupCategory&category=' + encodeURIComponent(val) + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ input.value=''; showToast('Category added'); loadData(); }
-    else showToast(data.error || 'Could not add category');
-  }catch(e){ showToast('Connection error'); }
-}
-async function submitNewUnit(){
-  const input = document.getElementById('newUnitInput');
-  const val = input.value.trim();
-  if(!val) return;
-  try{
-    const res = await fetch(API_URL + '?action=addUnit&unit=' + encodeURIComponent(val) + '&t=' + Date.now());
-    const data = await res.json();
-    if(data.success){ input.value=''; showToast('Unit added'); loadData(); }
-    else showToast(data.error || 'Could not add unit');
-  }catch(e){ showToast('Connection error'); }
 }
 
-renderTip();
-loadData();
-setInterval(loadData, 60000);
-</script>
-</body>
-</html>
+// =====================
+// TRACKER
+// =====================
+function getTrackerData() {
+  var rows = getDailySalesRaw();
+  var now = new Date();
+  var monthBuckets = {};
+  var monthOrder = [];
+  for (var m = 5; m >= 0; m--) {
+    var d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+    var key = d.getFullYear() + '-' + (d.getMonth() + 1);
+    monthOrder.push(key);
+    monthBuckets[key] = { revenue: 0, profit: 0, label: Utilities.formatDate(d, TZ, 'MMM') };
+  }
+  var clientTotals = {};
+  rows.forEach(function (r) {
+    var d = parseDateFlex(r.date);
+    if (d) {
+      var key = d.getFullYear() + '-' + (d.getMonth() + 1);
+      if (monthBuckets[key]) { monthBuckets[key].revenue += r.revenue; monthBuckets[key].profit += r.grossProfit; }
+    }
+    var cust = (r.customer || 'Unknown').toString().trim() || 'Unknown';
+    clientTotals[cust] = (clientTotals[cust] || 0) + r.revenue;
+  });
+  var monthlyTrend = monthOrder.map(function (k) { return monthBuckets[k]; });
+  var topClients = Object.keys(clientTotals).map(function (name) { return { name: name, revenue: clientTotals[name] }; })
+    .sort(function (a, b) { return b.revenue - a.revenue; }).slice(0, 8);
+
+  var aging = { d0_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 };
+  try {
+    var dc = getDebtorsCreditorsData();
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    (dc.debtors.rows || []).forEach(function (r) {
+      if (r.balance <= 0) return;
+      var d = parseDateFlex(r.invoiceDate);
+      var daysOld = d ? Math.floor((today.getTime() - d.getTime()) / 86400000) : 0;
+      if (daysOld <= 30) aging.d0_30 += r.balance;
+      else if (daysOld <= 60) aging.d31_60 += r.balance;
+      else if (daysOld <= 90) aging.d61_90 += r.balance;
+      else aging.d90plus += r.balance;
+    });
+  } catch (e) { /* ignore */ }
+
+  return { monthlyTrend: monthlyTrend, topClients: topClients, aging: aging };
+}
+
+function getProfitDashData() {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('PROFIT_DASH');
+  if (!sheet) return { rows: [], error: 'PROFIT_DASH not found' };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 1) return { rows: [] };
+  var vals = sheet.getRange(1, 2, lastRow, 2).getDisplayValues();
+  var rows = [];
+  for (var i = 0; i < vals.length; i++) {
+    var label = (vals[i][0] || '').toString().trim();
+    var value = (vals[i][1] || '').toString().trim();
+    if (!label) continue;
+    rows.push({ label: label, value: value, isSection: value === '' });
+  }
+  return { rows: rows };
+}
+
+// =====================
+// SETUP — Product Catalog CRUD, Categories, and Revenue/Expense targets
+// =====================
+function getSetupCatalog() {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('SETUP');
+  if (!sheet) return { headers: [], rows: [], error: 'SETUP not found' };
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  var vals = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  var markerRow = -1;
+  for (var r = 0; r < vals.length; r++) {
+    var rowText = vals[r].join(' ');
+    if (rowText.indexOf('SECTION 3') !== -1 && rowText.toUpperCase().indexOf('PRODUCT CATALOG') !== -1) { markerRow = r; break; }
+  }
+  if (markerRow === -1) return { headers: [], rows: [], error: 'Product catalog section not found in SETUP' };
+  var headerRowIdx = markerRow + 1;
+  var headers = vals[headerRowIdx] || [];
+  var stockCodeCol = findColIdx(headers, ['stock code']);
+  var nameCol = findColIdx(headers, ['product name']);
+  var categoryCol = findColIdx(headers, ['category']);
+  var unitCol = findColIdx(headers, ['unit']);
+  var reorderCol = findColIdx(headers, ['reorder']);
+  var unitCostCol = findColIdx(headers, ['unit cost']);
+  var retailCol = findColIdx(headers, ['retail price']);
+  var supplierCol = findColIdx(headers, ['supplier']);
+  var trackExpiryCol = findColIdx(headers, ['track', 'expiry']);
+  var prevCostCol = findColIdx(headers, ['previous unit cost']);
+  var priceChangedCol = findColIdx(headers, ['price changed date']);
+  if (nameCol === -1) return { headers: [], rows: [], error: 'Could not find Product Name column in catalog' };
+
+  var rows = [];
+  for (var r2 = headerRowIdx + 1; r2 < vals.length; r2++) {
+    var row = vals[r2];
+    var name = row[nameCol];
+    if (!name) { if (rows.length > 0) break; else continue; }
+    rows.push({
+      sheetRow: r2 + 1,
+      stockCode: stockCodeCol >= 0 ? row[stockCodeCol] : '',
+      name: name,
+      category: categoryCol >= 0 ? row[categoryCol] : '',
+      unit: unitCol >= 0 ? row[unitCol] : '',
+      reorderLevel: reorderCol >= 0 ? row[reorderCol] : '',
+      unitCost: unitCostCol >= 0 ? row[unitCostCol] : '',
+      retailPrice: retailCol >= 0 ? row[retailCol] : '',
+      supplier: supplierCol >= 0 ? row[supplierCol] : '',
+      trackExpiry: trackExpiryCol >= 0 ? row[trackExpiryCol] : '',
+      previousUnitCost: prevCostCol >= 0 ? row[prevCostCol] : '',
+      priceChangedDate: priceChangedCol >= 0 ? row[priceChangedCol] : ''
+    });
+    if (rows.length > 2000) break;
+  }
+  return {
+    headers: headers.filter(function (h) { return h; }),
+    rows: rows,
+    headerRowIndex: headerRowIdx + 1,
+    cols: {
+      stockCode: stockCodeCol, name: nameCol, category: categoryCol, unit: unitCol, reorder: reorderCol,
+      unitCost: unitCostCol, retail: retailCol, supplier: supplierCol, trackExpiry: trackExpiryCol,
+      prevCost: prevCostCol, priceChanged: priceChangedCol
+    }
+  };
+}
+
+function addSetupProductGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('SETUP');
+    if (!sheet) return jsonResponse({ error: 'SETUP not found' });
+    var catalog = getSetupCatalog();
+    if (catalog.error) return jsonResponse({ error: catalog.error });
+    if (!e.parameter.name) return jsonResponse({ error: 'Product Name is required' });
+    var targetRow = catalog.headerRowIndex + catalog.rows.length + 1;
+    var c = catalog.cols;
+    function setIf(colIdx, val) { if (colIdx >= 0 && val !== undefined && val !== '') sheet.getRange(targetRow, colIdx + 1).setValue(val); }
+    setIf(c.stockCode, e.parameter.stockCode || '');
+    setIf(c.name, e.parameter.name || '');
+    setIf(c.category, e.parameter.category || '');
+    setIf(c.unit, e.parameter.unit || '');
+    setIf(c.reorder, e.parameter.reorderLevel || '');
+    setIf(c.unitCost, e.parameter.unitCost || '');
+    setIf(c.retail, e.parameter.retailPrice || '');
+    setIf(c.supplier, e.parameter.supplier || '');
+    setIf(c.trackExpiry, e.parameter.trackExpiry || '');
+    try { logActivity('SETUP', e.parameter.name || '', 'product_added', '', e.parameter.stockCode || '', 'Added via dashboard'); } catch (le) {}
+    return jsonResponse({ success: true, row: targetRow });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+function updateSetupProductCostGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('SETUP');
+    if (!sheet) return jsonResponse({ error: 'SETUP not found' });
+    var catalog = getSetupCatalog();
+    if (catalog.error) return jsonResponse({ error: catalog.error });
+    var stockCode = (e.parameter.stockCode || '').toString().trim();
+    var sheetRowParam = parseInt(e.parameter.sheetRow, 10);
+    var newCost = parseFloat(e.parameter.newUnitCost);
+    if (isNaN(newCost)) return jsonResponse({ error: 'newUnitCost is required' });
+    var match = null;
+    for (var i = 0; i < catalog.rows.length; i++) {
+      if (sheetRowParam && catalog.rows[i].sheetRow === sheetRowParam) { match = catalog.rows[i]; break; }
+      if (!sheetRowParam && stockCode && (catalog.rows[i].stockCode || '').toString().trim() === stockCode) { match = catalog.rows[i]; break; }
+    }
+    if (!match) return jsonResponse({ error: 'Product not found in catalog' });
+    var c = catalog.cols;
+    var oldCost = match.unitCost;
+    if (c.prevCost >= 0) sheet.getRange(match.sheetRow, c.prevCost + 1).setValue(oldCost);
+    if (c.priceChanged >= 0) sheet.getRange(match.sheetRow, c.priceChanged + 1).setValue(fmtDateKey(new Date()));
+    if (c.unitCost >= 0) sheet.getRange(match.sheetRow, c.unitCost + 1).setValue(newCost);
+    try { logActivity('SETUP', match.name, 'cost_updated', 'GHS ' + oldCost, 'GHS ' + newCost, 'Unit cost updated via dashboard'); } catch (le) {}
+    return jsonResponse({ success: true, previousUnitCost: oldCost, newUnitCost: newCost });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+function getSetupCategories() {
+  var ss = getMainSS();
+  var sheet = ss.getSheetByName('SETUP');
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  var vals = sheet.getRange(1, 2, lastRow, 1).getDisplayValues();
+  var startRow = -1;
+  for (var r = 0; r < vals.length; r++) {
+    if ((vals[r][0] || '').toString().indexOf('PRODUCT CATEGORIES') !== -1) { startRow = r; break; }
+  }
+  if (startRow === -1) return [];
+  var cats = [];
+  for (var r2 = startRow + 1; r2 < vals.length; r2++) {
+    var v = (vals[r2][0] || '').toString().trim();
+    if (!v) break;
+    if (v.toUpperCase().indexOf('TAX') !== -1 || v.toUpperCase().indexOf('SUPPLIER') !== -1) break;
+    cats.push(v);
+    if (cats.length > 40) break;
+  }
+  return cats;
+}
+
+function addSetupCategoryGET(e) {
+  try {
+    var category = (e.parameter.category || '').toString().trim();
+    if (!category) return jsonResponse({ error: 'category is required' });
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('SETUP');
+    if (!sheet) return jsonResponse({ error: 'SETUP not found' });
+    var lastRow = sheet.getLastRow();
+    var vals = sheet.getRange(1, 2, lastRow, 1).getDisplayValues();
+    var startRow = -1;
+    for (var r = 0; r < vals.length; r++) {
+      if ((vals[r][0] || '').toString().indexOf('PRODUCT CATEGORIES') !== -1) { startRow = r; break; }
+    }
+    if (startRow === -1) return jsonResponse({ error: 'Category reference list not found in SETUP' });
+    var insertAt = startRow + 1;
+    for (var r2 = startRow + 1; r2 < vals.length; r2++) {
+      var v = (vals[r2][0] || '').toString().trim();
+      if (!v) { insertAt = r2; break; }
+      insertAt = r2 + 1;
+    }
+    sheet.getRange(insertAt + 1, 2).setValue(category);
+    return jsonResponse({ success: true, categories: getSetupCategories() });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+// =====================
+// DASHBOARD_SETTINGS
+// =====================
+function ensureSettingsSheet(ss) {
+  var sheet = ss.getSheetByName('DASHBOARD_SETTINGS');
+  if (!sheet) {
+    sheet = ss.insertSheet('DASHBOARD_SETTINGS');
+    sheet.getRange(1, 1, 1, 3).setValues([['Key', 'Value', 'Description']]);
+    sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+    var defaults = [
+      ['business_name', '', 'Shown in the dashboard header'],
+      ['industry', 'Medical & Healthcare Supplies', 'Used for default theme choice'],
+      ['primary_color', '#0d9488', 'Main accent colour (teal)'],
+      ['secondary_color', '#0ea5e9', 'Secondary accent colour (sky blue)'],
+      ['alert_color', '#e11d48', 'Overdue / alert colour'],
+      ['monthly_target', '0', 'Monthly revenue target GHS'],
+      ['working_days', '26', 'Working days per month'],
+      ['daily_revenue_target', '0', 'Daily revenue target GHS'],
+      ['weekly_revenue_target', '0', 'Weekly revenue target GHS'],
+      ['annual_revenue_target', '0', 'Annual revenue target GHS'],
+      ['daily_expense_budget', '0', 'Daily expense budget GHS'],
+      ['weekly_expense_budget', '0', 'Weekly expense budget GHS'],
+      ['monthly_expense_budget', '0', 'Monthly expense budget GHS'],
+      ['annual_expense_budget', '0', 'Annual expense budget GHS'],
+      ['branding_enabled', 'true', 'Show "Powered by BYINFORGH" footer on the dashboard (true/false)']
+    ];
+    sheet.getRange(2, 1, defaults.length, 3).setValues(defaults);
+  }
+  return sheet;
+}
+// v4.3: backfill any keys added in later versions (e.g. branding_enabled,
+// the revenue-target/expense-budget keys) onto a DASHBOARD_SETTINGS sheet
+// that already existed from an earlier version — ensureSettingsSheet()
+// above only writes its defaults the very first time the sheet is
+// created, so an older sheet was permanently missing these keys. This
+// runs once per read, only appends what's missing, and never overwrites
+// a value you've already set.
+var SETTINGS_DEFAULTS = [
+  ['business_name', ''], ['industry', 'Medical & Healthcare Supplies'],
+  ['primary_color', '#0d6e63'], ['secondary_color', '#2f6fa3'], ['alert_color', '#b3402f'],
+  ['monthly_target', '0'], ['working_days', '26'],
+  ['daily_revenue_target', '0'], ['weekly_revenue_target', '0'], ['annual_revenue_target', '0'],
+  ['daily_expense_budget', '0'], ['weekly_expense_budget', '0'], ['monthly_expense_budget', '0'], ['annual_expense_budget', '0'],
+  ['branding_enabled', 'true']
+];
+function backfillMissingSettings(sheet, existingSettings) {
+  var missing = SETTINGS_DEFAULTS.filter(function (kv) { return !(kv[0] in existingSettings); });
+  if (!missing.length) return;
+  missing.forEach(function (kv) {
+    sheet.appendRow([kv[0], kv[1], '']);
+    existingSettings[kv[0]] = kv[1];
+  });
+}
+function getSettings() {
+  // v4.4: was being called twice per getData() (once directly, once
+  // again inside getRevenueData()) — now computed once per request.
+  var c = reqCache();
+  if (c.settings) return c.settings;
+  var ss = getMainSS();
+  var sheet = ensureSettingsSheet(ss);
+  var data = sheet.getDataRange().getValues();
+  var settings = {};
+  for (var i = 1; i < data.length; i++) { if (data[i][0]) settings[data[i][0]] = data[i][1] !== undefined ? data[i][1].toString() : ''; }
+  try { backfillMissingSettings(sheet, settings); } catch (be) { /* never block a read on this */ }
+  c.settings = settings;
+  return settings;
+}
+function saveSettingsGET(e) {
+  try {
+    var ss = getMainSS();
+    var sheet = ensureSettingsSheet(ss);
+    var data = sheet.getDataRange().getValues();
+    Object.keys(e.parameter).forEach(function (key) {
+      if (key === 'action' || key === 't') return;
+      var found = false;
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === key) { sheet.getRange(i + 1, 2).setValue(e.parameter[key]); found = true; break; }
+      }
+      if (!found) sheet.appendRow([key, e.parameter[key], '']);
+    });
+    // v4.4: this write just changed DASHBOARD_SETTINGS, so drop the
+    // request-scoped settings cache (if any) before re-reading it —
+    // otherwise getSettings() below would hand back the stale
+    // pre-write values from earlier in this same request.
+    reqCache().settings = null;
+    return jsonResponse({ success: true, settings: getSettings() });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+// =====================
+// AI ASSISTANT
+// =====================
+function aiAskGET(e) {
+  try {
+    var apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+    if (!apiKey) {
+      return jsonResponse({ error: 'No ANTHROPIC_API_KEY set. In Apps Script: Project Settings -> Script Properties -> Add property -> ANTHROPIC_API_KEY -> your key -> Save, then reload the dashboard.' });
+    }
+    var question = e.parameter.question || '';
+    var historyRaw = e.parameter.history || '[]';
+    var context = e.parameter.context || '';
+    var history = [];
+    try { history = JSON.parse(historyRaw); } catch (pe) { history = []; }
+    if (!question && history.length === 0) return jsonResponse({ error: 'No question provided' });
+
+    var messages = history.length ? history : [{ role: 'user', content: question }];
+    var system = 'You are the business assistant embedded in the CORAZON Command Centre dashboard, a medical supplies '
+      + 'business in Ghana. Be concise, practical and specific to Ghana SME operations — hospitals, clinics, invoicing, '
+      + 'follow-ups and cash flow. Draw on WhatsApp sales practice (fast replies, structured follow-up, referral asks, '
+      + 'reorder check-ins) when relevant. Use any live business context the user provides.'
+      + (context ? ('\n\nCurrent dashboard context:\n' + context) : '');
+
+    var payload = { model: 'claude-sonnet-4-6', max_tokens: 800, system: system, messages: messages };
+    var options = {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+    var resp = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', options);
+    var code = resp.getResponseCode();
+    var data = JSON.parse(resp.getContentText());
+    if (code !== 200) {
+      return jsonResponse({ error: (data.error && data.error.message) ? data.error.message : ('Anthropic API error ' + code) });
+    }
+    var text = '';
+    if (data.content && data.content.length) {
+      for (var i = 0; i < data.content.length; i++) {
+        if (data.content[i].type === 'text') text += data.content[i].text;
+      }
+    }
+    return jsonResponse({ success: true, reply: text || '(empty response)' });
+  } catch (err) {
+    return jsonResponse({ error: err.toString() });
+  }
+}
+
+// =====================
+// MAIN getData — aggregates everything the dashboard needs in one call
+// v4.2: cached for 20s via CacheService so a slow mobile connection isn't
+// forced to wait for a full ~20-sheet-read recompute on every refresh.
+// Any write action clears this cache (see doGet/routeAction above) so
+// your own changes always show up on your very next refresh.
+// v4.3: with the INVENTORY-bloat fix above, the response should now
+// actually be small enough for CacheService to store it (100KB/key
+// limit) instead of silently failing to cache every time.
+// v4.4: even on a cache miss (which is every single 60s auto-refresh,
+// since the cache TTL is shorter than the refresh interval), this is now
+// far cheaper — see the request-scoped memoization notes above.
+// =====================
+function getData() {
+  try {
+    var cached = CacheService.getScriptCache().get(DATA_CACHE_KEY);
+    if (cached) return JSON.parse(cached);
+  } catch (ce) { /* cache unavailable/corrupt — fall through and compute fresh */ }
+
+  var result = {};
+  try { result.settings = getSettings(); } catch (e) { result.settingsError = e.toString(); result.settings = {}; }
+  try { result.dailySales = getDailySalesData(); } catch (e) { result.dailySalesError = e.toString(); result.dailySales = { rows: [] }; }
+  try { result.debtorsCreditors = getDebtorsCreditorsData(); } catch (e) { result.debtorsCreditorsError = e.toString(); }
+  try { result.revenue = getRevenueData(); } catch (e) { result.revenueError = e.toString(); result.revenue = {}; }
+  try { result.followUps = getFollowUpsData(); } catch (e) { result.followUpsError = e.toString(); result.followUps = { items: [] }; }
+  try { result.tracker = getTrackerData(); } catch (e) { result.trackerError = e.toString(); result.tracker = {}; }
+  try { result.callsMessages = getCallsMessages(); } catch (e) { result.callsMessagesError = e.toString(); result.callsMessages = { calls: [], messages: [] }; }
+  try { result.archive = getArchiveData(); } catch (e) { result.archiveError = e.toString(); result.archive = { rows: [] }; }
+  try { result.archiveSales = getArchiveSalesData(); } catch (e) { result.archiveSalesError = e.toString(); result.archiveSales = { rows: [] }; }
+  try { result.clientHealth = getClientHealthData(); } catch (e) { result.clientHealthError = e.toString(); result.clientHealth = { rows: [], counts: {} }; }
+  try { result.taxCodes = getTaxCodes(); } catch (e) { result.taxCodesError = e.toString(); result.taxCodes = []; }
+  try { result.setupCatalog = getSetupCatalog(); } catch (e) { result.setupCatalogError = e.toString(); result.setupCatalog = { headers: [], rows: [] }; }
+  try { result.setupCategories = getSetupCategories(); } catch (e) { result.setupCategoriesError = e.toString(); result.setupCategories = []; }
+  try { result.units = getUnits(); } catch (e) { result.unitsError = e.toString(); result.units = []; }
+  try { result.appointments = getAppointments(); } catch (e) { result.appointmentsError = e.toString(); result.appointments = []; }
+  try { result.profitDash = getProfitDashData(); } catch (e) { result.profitDashError = e.toString(); result.profitDash = { rows: [] }; }
+
+  var genericTabs = {
+    expenses: 'EXPENSES', clients: 'CLIENTS', inventory: 'INVENTORY', purchases: 'PURCHASES', referrals: 'REFERRALS',
+    dailyTotals: 'DAILY_TOTALS', weeklySales: 'WEEKLY_SALES', monthlyRpt: 'MONTHLY_RPT',
+    annualSummary: 'ANNUAL_SUMMARY', stockAnalysis: 'STOCK_ANALYSIS'
+  };
+  Object.keys(genericTabs).forEach(function (key) {
+    try { result[key] = readGenericTable(genericTabs[key]); } catch (e) { result[key] = { headers: [], rows: [], error: e.toString() }; }
+  });
+
+  result.lastUpdated = new Date().toString();
+
+  try {
+    CacheService.getScriptCache().put(DATA_CACHE_KEY, JSON.stringify(result), 20);
+  } catch (ce2) { /* result too large for a single cache key (>100KB), or cache unavailable — just skip caching, nothing breaks */ }
+
+  return result;
+}
+
+// Small helper used throughout for a lightweight activity trail.
+function logActivity(sheetName, who, action, before, after, note) {
+  try {
+    var ss = getMainSS();
+    var sheet = ss.getSheetByName('ACTIVITY_LOG');
+    if (!sheet) {
+      sheet = ss.insertSheet('ACTIVITY_LOG');
+      sheet.getRange(1, 1, 1, 6).setValues([['Timestamp', 'Sheet', 'Who', 'Action', 'Before → After', 'Note']]);
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
+    }
+    sheet.appendRow([new Date(), sheetName, who || '', action || '', (before || '') + ' → ' + (after || ''), note || '']);
+  } catch (e) { /* logging must never break the caller */ }
+}
