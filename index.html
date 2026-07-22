@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>CORAZON — Command Centre</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eef2f0;
+  --card:#ffffff;
+  --ink:#16261f;
+  --ink-dim:#5b6b64;
+  --teal:#0d6e63;
+  --teal-dim:#e4f0ed;
+  --blue:#2f6fa3;
+  --blue-dim:#e7f0f7;
+  --coral:#b3402f;
+  --coral-dim:#f7e9e6;
+  --amber:#a97328;
+  --amber-dim:#f5ecdd;
+  --line:#d7e0dc;
+  --line-soft:#e7ede9;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',sans-serif;min-height:100vh;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.display{font-family:'Space Grotesk',sans-serif;}
+
+.header{background:var(--card);border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;flex-wrap:wrap;gap:10px;}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-mark{width:38px;height:38px;border-radius:9px;background:var(--teal);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;}
+.brand-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:18px;letter-spacing:0.2px;}
+.brand-sub{font-size:10.5px;color:var(--ink-dim);letter-spacing:1.5px;text-transform:uppercase;margin-top:1px;}
+.header-right{display:flex;align-items:center;gap:14px;}
+.live-dot{width:7px;height:7px;background:var(--teal);border-radius:50%;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.last-refresh{font-size:11px;color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;}
+.refresh-btn{background:var(--teal);border:none;color:#fff;padding:8px 16px;border-radius:7px;cursor:pointer;font-size:12px;font-family:'Space Grotesk',sans-serif;font-weight:600;letter-spacing:0.4px;}
+.refresh-btn:hover{background:#0a5850;}
+.refresh-btn.ghost{background:none;border:1px solid var(--line);color:var(--ink);}
+.refresh-btn.ghost:hover{border-color:var(--teal);color:var(--teal);}
+.refresh-btn.small{padding:5px 10px;font-size:10.5px;}
+.refresh-btn.coral{background:var(--coral);}
+.refresh-btn.coral:hover{background:#8f3225;}
+.refresh-btn:disabled{opacity:.5;cursor:not-allowed;}
+
+.main{padding:20px 24px 60px;max-width:1440px;margin:0 auto;}
+
+.tabs{display:flex;gap:6px;margin-bottom:22px;background:var(--card);padding:6px;border-radius:10px;border:1px solid var(--line);overflow-x:auto;}
+.tab{padding:9px 14px;border-radius:7px;cursor:pointer;font-size:11.5px;font-weight:600;white-space:nowrap;color:var(--ink-dim);border:none;background:none;font-family:'Space Grotesk',sans-serif;letter-spacing:0.3px;transition:all .15s;}
+.tab.active{background:var(--teal);color:#fff;}
+.tab:hover:not(.active){background:var(--teal-dim);color:var(--teal);}
+.tab-content{display:none;}
+.tab-content.active{display:block;animation:fade .2s ease;}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+.vitals{display:flex;background:var(--ink);border-radius:12px;overflow-x:auto;margin-bottom:18px;}
+.vital{flex:1;min-width:150px;padding:16px 18px;position:relative;}
+.vital + .vital{border-left:1px dashed rgba(255,255,255,0.18);}
+.vital-label{font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;color:rgba(255,255,255,0.55);margin-bottom:6px;}
+.vital-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;color:#fff;}
+.vital-value.teal{color:#5fd8c8;}
+.vital-value.coral{color:#f0968a;}
+.vital-value.amber{color:#e8bd77;}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;}
+.grid3{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:16px;margin-bottom:18px;}
+@media(max-width:900px){.grid{grid-template-columns:1fr;}.grid3{grid-template-columns:1fr;}}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px;}
+.card-title{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:var(--ink-dim);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;}
+
+.summary-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.summary-chip{flex:1;min-width:120px;background:var(--teal-dim);border-radius:9px;padding:12px 14px;}
+.summary-chip.coral{background:var(--coral-dim);}
+.summary-chip.amber{background:var(--amber-dim);}
+.summary-chip.blue{background:var(--blue-dim);}
+.summary-chip-label{font-size:10px;color:var(--ink-dim);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;}
+.summary-chip-value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+th{text-align:left;padding:8px 10px;color:var(--ink-dim);font-weight:600;font-size:10.5px;letter-spacing:0.4px;text-transform:uppercase;border-bottom:1px solid var(--line);}
+td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle;}
+tr:hover td{background:var(--teal-dim);}
+.scroll-table{overflow-x:auto;max-height:520px;overflow-y:auto;}
+
+input,select,textarea{width:100%;background:#fbfcfb;border:1px solid var(--line);color:var(--ink);font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:9px 11px;border-radius:7px;outline:none;}
+input:focus,select:focus,textarea:focus{border-color:var(--teal);}
+label{display:block;font-size:10.5px;color:var(--ink-dim);letter-spacing:0.4px;text-transform:uppercase;margin:0 0 4px;font-weight:600;}
+.field{margin-bottom:10px;}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+@media(max-width:600px){.field-row{grid-template-columns:1fr;}}
+
+.badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:600;letter-spacing:0.3px;}
+.badge.cleared{background:var(--teal-dim);color:var(--teal);}
+.badge.overdue{background:var(--coral-dim);color:var(--coral);}
+.badge.pending{background:var(--amber-dim);color:var(--amber);}
+.badge.blue{background:var(--blue-dim);color:var(--blue);}
+
+.empty{text-align:center;padding:30px;color:var(--ink-dim);font-size:12.5px;}
+.loading{text-align:center;padding:40px;color:var(--ink-dim);font-size:12.5px;font-family:'IBM Plex Mono',monospace;}
+.loading::after{content:'...';animation:dots 1.4s infinite;}
+@keyframes dots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
+.error-msg{background:var(--coral-dim);border:1px solid var(--coral);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--coral);margin-bottom:14px;}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transform:translateY(16px);transition:all .25s;z-index:999;}
+.toast.show{opacity:1;transform:translateY(0);}
+.section-note{font-size:11.5px;color:var(--ink-dim);line-height:1.6;margin-bottom:14px;}
+.swatch-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+.swatch{width:34px;height:34px;border-radius:8px;cursor:pointer;border:2px solid transparent;}
+.swatch.selected{border-color:var(--ink);}
+
+/* Home command centre extras */
+.progress-outer{background:var(--line-soft);border-radius:20px;height:14px;overflow:hidden;margin:8px 0;}
+.progress-inner{height:100%;background:var(--teal);border-radius:20px;transition:width .4s;}
+.progress-inner.over{background:var(--coral);}
+.due-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:9px;margin-bottom:8px;background:var(--line-soft);gap:10px;}
+.due-item.overdue{background:var(--coral-dim);}
+.due-item.today{background:var(--amber-dim);}
+.due-left{font-size:12.5px;}
+.due-left b{display:block;}
+.due-left span{font-size:11px;color:var(--ink-dim);}
+.due-tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}
+.due-tag.overdue{background:var(--coral);color:#fff;}
+.due-tag.today{background:var(--amber);color:#fff;}
+.due-tag.soon{background:var(--blue);color:#fff;}
+.status-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+@media(max-width:700px){.status-board{grid-template-columns:repeat(2,1fr);}}
+.status-cell{background:var(--line-soft);border-radius:9px;padding:12px;text-align:center;}
+.status-cell .num{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
+.status-cell .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);margin-top:3px;}
+.tip-box{background:linear-gradient(135deg,var(--ink),#1f352c);color:#fff;border-radius:12px;padding:18px;position:relative;overflow:hidden;}
+.tip-box .eyebrow{font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:#7fd9c9;margin-bottom:8px;}
+.tip-box .tip-text{font-size:14px;line-height:1.55;margin-bottom:10px;}
+.tip-box .tip-source{font-size:10.5px;color:rgba(255,255,255,0.55);}
+.tip-box button{margin-top:10px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;padding:6px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;}
+.tip-box button:hover{background:rgba(255,255,255,0.2);}
+.activity-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12px;}
+.activity-icon{width:26px;height:26px;border-radius:7px;background:var(--teal-dim);color:var(--teal);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+.bar-chart{display:flex;align-items:flex-end;gap:10px;height:140px;padding-top:10px;}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
+.bar{width:100%;max-width:34px;background:var(--teal);border-radius:5px 5px 0 0;transition:height .3s;}
+.bar-label{font-size:9.5px;color:var(--ink-dim);margin-top:6px;}
+.bar-value{font-size:9px;color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;margin-bottom:3px;}
+.aging-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.aging-label{width:70px;font-size:11px;color:var(--ink-dim);flex-shrink:0;}
+.aging-bar-outer{flex:1;background:var(--line-soft);border-radius:6px;height:16px;overflow:hidden;}
+.aging-bar-inner{height:100%;background:var(--teal);}
+.aging-bar-inner.warn{background:var(--amber);}
+.aging-bar-inner.danger{background:var(--coral);}
+.aging-value{width:80px;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
+details summary{list-style:none;}
+details summary::-webkit-details-marker{display:none;}
+
+/* v3.0: client health pipeline */
+.health-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}
+@media(max-width:700px){.health-board{grid-template-columns:repeat(2,1fr);}}
+.health-cell{border-radius:9px;padding:12px;text-align:center;background:var(--line-soft);}
+.health-cell.active{background:var(--teal-dim);}
+.health-cell.due{background:var(--amber-dim);}
+.health-cell.overdue{background:var(--coral-dim);}
+.health-cell.dormant{background:#e6e6e6;}
+.health-cell .num{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
+.health-cell .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);margin-top:3px;}
+.health-row{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:8px;margin-bottom:6px;background:var(--line-soft);font-size:12.5px;}
+.health-row .hr-label{font-weight:700;font-size:11px;white-space:nowrap;}
+
+/* v3.0: AI assistant */
+.chat-box{display:flex;flex-direction:column;height:360px;}
+.chat-log{flex:1;overflow-y:auto;background:var(--line-soft);border-radius:9px;padding:10px;margin-bottom:10px;}
+.chat-msg{margin-bottom:10px;font-size:12.5px;line-height:1.5;}
+.chat-msg.user{text-align:right;}
+.chat-msg .bubble{display:inline-block;padding:8px 12px;border-radius:10px;max-width:85%;text-align:left;}
+.chat-msg.user .bubble{background:var(--teal);color:#fff;}
+.chat-msg.assistant .bubble{background:#fff;border:1px solid var(--line);}
+.chat-input-row{display:flex;gap:8px;}
+.chat-input-row input{flex:1;}
+.chat-input-row button{flex-shrink:0;width:auto;padding:9px 16px;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <div class="brand-mark" id="brandMark">C</div>
+    <div>
+      <div class="brand-name" id="brandName">CORAZON</div>
+      <div class="brand-sub" id="brandSub">Command Centre</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-dot"></div>
+    <span class="last-refresh" id="lastRefresh">Loading...</span>
+    <button class="refresh-btn" onclick="loadData()">&#8635; Refresh</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('home',this)">Home</button>
+    <button class="tab" onclick="switchTab('followups',this)">Follow-Ups</button>
+    <button class="tab" onclick="switchTab('tracker',this)">Tracker</button>
+    <button class="tab" onclick="switchTab('clienthealth',this)">Client Pipeline</button>
+    <button class="tab" onclick="switchTab('sales',this)">Daily Sales</button>
+    <button class="tab" onclick="switchTab('expenses',this)">Expenses</button>
+    <button class="tab" onclick="switchTab('debtcred',this)">Debtors &amp; Creditors</button>
+    <button class="tab" onclick="switchTab('clients',this)">Clients</button>
+    <button class="tab" onclick="switchTab('inventory',this)">Inventory</button>
+    <button class="tab" onclick="switchTab('purchases',this)">Purchases</button>
+    <button class="tab" onclick="switchTab('referrals',this)">Referrals</button>
+    <button class="tab" onclick="switchTab('callsmsgs',this)">Calls &amp; Messages</button>
+    <button class="tab" onclick="switchTab('archive',this)">Archive</button>
+    <button class="tab" onclick="switchTab('assistant',this)">AI Assistant</button>
+    <button class="tab" onclick="switchTab('setup',this)">Setup</button>
+  </div>
+
+  <!-- ============ HOME / SUMMARY ============ -->
+  <div class="tab-content active" id="tab-home">
+    <div class="vitals" id="vitalsStrip"><div class="vital"><div class="vital-label">Loading</div><div class="vital-value">···</div></div></div>
+
+    <div class="grid3">
+      <div class="card">
+        <div class="card-title">Revenue Target — this month</div>
+        <div id="revenueBlock"><div class="loading">Loading</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Due &amp; Overdue<span class="mono" id="followUpCountBadge"></span></div>
+        <div id="homeFollowUps"><div class="loading">Loading</div></div>
+      </div>
+      <div class="card tip-box" id="tipCard">
+        <div class="eyebrow">Today's Tip</div>
+        <div class="tip-text" id="tipText">Loading a tip for you...</div>
+        <div class="tip-source" id="tipSource"></div>
+        <button onclick="nextTip()">Next tip →</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Accounts Status Board</div>
+        <div class="status-board" id="statusBoard"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Client Reorder Pipeline<span class="mono" id="healthCountBadge"></span></div>
+        <div class="section-note">Auto-computed from real order dates — no manual tagging. See the Client Pipeline tab for the full list.</div>
+        <div class="health-board" id="homeHealthBoard"></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Recent Sales</div>
+        <div id="homeRecentSales"><div class="loading">Loading</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Recent Activity — calls, messages &amp; sales</div>
+        <div id="homeActivity"><div class="loading">Loading</div></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Quick — Log a Call</div>
+        <div class="field-row">
+          <div class="field"><label>Business / Client</label><input type="text" id="hcBusiness"></div>
+          <div class="field"><label>Number</label><input type="text" id="hcNumber"></div>
+        </div>
+        <div class="field"><label>Notes</label><input type="text" id="hcNotes" placeholder="What was discussed"></div>
+        <div class="field-row">
+          <div class="field"><label>Next Action</label><input type="text" id="hcNextAction" placeholder="e.g. Send quote"></div>
+          <div class="field"><label>Next Follow-Up Date</label><input type="date" id="hcNextFollowUp"></div>
+        </div>
+        <button class="refresh-btn" style="width:100%" onclick="quickLogCall()">+ Log Call</button>
+        <div id="hcResult" style="margin-top:6px;font-size:12px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Quick — Log a Message</div>
+        <div class="field-row">
+          <div class="field"><label>Business / Client</label><input type="text" id="hmBusiness"></div>
+          <div class="field"><label>Channel</label><select id="hmChannel"><option>WhatsApp</option><option>SMS</option><option>Email</option><option>Call</option><option>In Person</option></select></div>
+        </div>
+        <div class="field"><label>Summary</label><input type="text" id="hmSummary" placeholder="What was the message about"></div>
+        <button class="refresh-btn" style="width:100%" onclick="quickLogMessage()">+ Log Message</button>
+        <div id="hmResult" style="margin-top:6px;font-size:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FOLLOW-UPS ============ -->
+  <div class="tab-content" id="tab-followups">
+    <div class="card">
+      <div class="card-title">Follow-Up Calendar</div>
+      <div class="section-note">Every debtor/creditor payment due within 3 days (or overdue), any call with a next follow-up date, and any client whose reorder is overdue or dormant — one combined list, nothing needs to be entered twice.</div>
+      <div id="followUpsFull"><div class="loading">Loading</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TRACKER ============ -->
+  <div class="tab-content" id="tab-tracker">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Revenue &amp; Profit — last 6 months</div>
+        <div id="trendChart"><div class="loading">Loading</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Top Clients by Revenue</div>
+        <div id="topClientsList"><div class="loading">Loading</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Debtor Aging — how old is money owed to you</div>
+      <div id="agingChart"><div class="loading">Loading</div></div>
+    </div>
+  </div>
+
+  <!-- ============ CLIENT PIPELINE (reorder health) ============ -->
+  <div class="tab-content" id="tab-clienthealth">
+    <div class="card">
+      <div class="card-title">Reorder Health — every client, one glance</div>
+      <div class="section-note">CORAZON serves a small number of established clients rather than chasing cold leads, so instead of a manual prospecting pipeline, every client here is auto-labelled purely from real order dates in Daily Sales: 🟢 Active (ordered in the last 30 days) · 🟡 Due (31–60 days) · 🔴 Overdue (61–120 days) · ⚫ Dormant (120+ days). No tagging needed — it updates itself every time you log a sale.</div>
+      <div class="health-board" id="healthBoardFull"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">All Clients by Days Since Last Order</div>
+      <div class="scroll-table"><table><thead><tr><th>Client</th><th>Status</th><th>Last Order</th><th>Days Since</th><th>Total Revenue</th></tr></thead><tbody id="healthTableBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- ============ DAILY SALES ============ -->
+  <div class="tab-content" id="tab-sales">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Log a Sale</div>
+        <div class="section-note">Fill in date, customer, stock code and quantity — product name, price, cost, revenue and tax amount auto-fill from your SETUP catalog exactly like they do when you type it in by hand.</div>
+        <div class="field-row">
+          <div class="field"><label>Date</label><input type="date" id="saleDate"></div>
+          <div class="field"><label>Customer Name</label><input type="text" id="saleCustomer" placeholder="e.g. Nkwatia Hospital"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Stock Code</label><input type="text" id="saleStockCode" placeholder="e.g. HB 1"></div>
+          <div class="field"><label>Qty Sold</label><input type="number" id="saleQty" placeholder="e.g. 10"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Discount % (optional)</label><input type="text" id="saleDiscount" placeholder="e.g. 5"></div>
+          <div class="field"><label>Tax % override (optional)</label><input type="text" id="saleTax" placeholder="leave blank to use default"></div>
+        </div>
+        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitSale()">+ Log Sale</button>
+        <div id="saleResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Today &amp; All-Time</div>
+        <div class="summary-row" id="salesSummaryChips"></div>
+        <div class="section-note">Showing the most recent 500 entries below. Full history stays in the DAILY_SALES sheet. Use the Archive tab to sweep entries older than 12 months into ARCHIVE_SALES if the sheet starts feeling slow.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Recent Entries</div>
+      <div class="scroll-table"><table><thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Gross Profit</th></tr></thead><tbody id="salesTableBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- ============ EXPENSES ============ -->
+  <div class="tab-content" id="tab-expenses">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Log an Expense</div>
+        <div id="expenseFormFields"></div>
+        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('expenses','addExpense')">+ Log Expense</button>
+        <div id="expensesResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">About this tab</div>
+        <div class="section-note">This form is built automatically from your EXPENSES sheet's actual column headers, so it always matches what's really there. If a field is missing or in the wrong order, tell me the exact header text and I'll fix the mapping.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Recent Expenses</div>
+      <div class="scroll-table"><table><thead id="expensesTableHead"></thead><tbody id="expensesTableBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- ============ DEBTORS & CREDITORS ============ -->
+  <div class="tab-content" id="tab-debtcred">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Debtors — owed TO you</div>
+        <div class="summary-row" id="debtorsSummaryChips"></div>
+        <details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--teal);font-weight:600">+ Add a debtor</summary>
+          <div style="margin-top:10px">
+            <div class="field-row">
+              <div class="field"><label>Client Name</label><input type="text" id="debtorName"></div>
+              <div class="field"><label>Contact</label><input type="text" id="debtorContact"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Amount Owed (GHS)</label><input type="number" id="debtorAmountOwed"></div>
+              <div class="field"><label>Amount Paid (GHS)</label><input type="number" id="debtorAmountPaid" value="0"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Invoice Date</label><input type="date" id="debtorInvoiceDate"></div>
+              <div class="field"><label>Due Date</label><input type="date" id="debtorDueDate"></div>
+            </div>
+            <div class="field"><label>Payment Method</label><select id="debtorPaymentMethod"><option value="">—</option><option>Cash</option><option>Cheque</option></select></div>
+            <div class="field"><label>Notes</label><input type="text" id="debtorNotes"></div>
+            <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('debtor')">+ Add Debtor</button>
+            <div id="debtorResult" style="margin-top:6px;font-size:12px"></div>
+          </div>
+        </details>
+        <div class="scroll-table"><table><thead><tr><th>Name</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody id="debtorsTableBody"></tbody></table></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Creditors — you OWE to suppliers</div>
+        <div class="summary-row" id="creditorsSummaryChips"></div>
+        <details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;color:var(--teal);font-weight:600">+ Add a creditor</summary>
+          <div style="margin-top:10px">
+            <div class="field-row">
+              <div class="field"><label>Supplier / Vendor</label><input type="text" id="creditorName"></div>
+              <div class="field"><label>Contact</label><input type="text" id="creditorContact"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Amount Owed (GHS)</label><input type="number" id="creditorAmountOwed"></div>
+              <div class="field"><label>Amount Paid (GHS)</label><input type="number" id="creditorAmountPaid" value="0"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Invoice Date</label><input type="date" id="creditorInvoiceDate"></div>
+              <div class="field"><label>Due Date</label><input type="date" id="creditorDueDate"></div>
+            </div>
+            <div class="field"><label>Payment Method</label><select id="creditorPaymentMethod"><option value="">—</option><option>Cash</option><option>Cheque</option></select></div>
+            <div class="field"><label>Notes</label><input type="text" id="creditorNotes"></div>
+            <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('creditor')">+ Add Creditor</button>
+            <div id="creditorResult" style="margin-top:6px;font-size:12px"></div>
+          </div>
+        </details>
+        <div class="scroll-table"><table><thead><tr><th>Name</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody id="creditorsTableBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Keep this table fast — archive cleared accounts</div>
+      <div class="section-note">Cleared entries (balance = GHS 0) can pile up over time and slow the sheet down. Sweep them into the Archive tab in one click — nothing is deleted, you can always restore from there.</div>
+      <button class="refresh-btn ghost" onclick="sweepArchive()">Sweep all cleared accounts to Archive</button>
+      <div id="sweepResult" style="margin-top:8px;font-size:12px"></div>
+    </div>
+  </div>
+
+  <!-- ============ CLIENTS ============ -->
+  <div class="tab-content" id="tab-clients">
+    <div class="grid">
+      <div class="card"><div class="card-title">Add a Client</div><div id="clientsFormFields"></div>
+        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('clients','addClient')">+ Add Client</button>
+        <div id="clientsResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your CLIENTS sheet headers automatically. For each client's live reorder status, see the Client Pipeline tab.</div></div>
+    </div>
+    <div class="card"><div class="card-title">All Clients</div><div class="scroll-table"><table><thead id="clientsTableHead"></thead><tbody id="clientsTableBody"></tbody></table></div></div>
+  </div>
+
+  <!-- ============ INVENTORY ============ -->
+  <div class="tab-content" id="tab-inventory">
+    <div class="card"><div class="card-title">Inventory (read-only view)</div>
+      <div class="section-note">Inventory is managed from your SETUP/PURCHASES formulas — this is a live read-only view. Search below.</div>
+      <input type="text" id="inventorySearch" placeholder="Search stock code or product name..." oninput="renderInventory()" style="margin-bottom:12px">
+      <div class="scroll-table"><table><thead id="inventoryTableHead"></thead><tbody id="inventoryTableBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- ============ PURCHASES ============ -->
+  <div class="tab-content" id="tab-purchases">
+    <div class="grid">
+      <div class="card"><div class="card-title">Log a Purchase</div><div id="purchasesFormFields"></div>
+        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('purchases','addPurchase')">+ Log Purchase</button>
+        <div id="purchasesResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your PURCHASES sheet headers automatically — this is where supplier price changes (e.g. from dollar fluctuations) get logged going forward without touching past sales.</div></div>
+    </div>
+    <div class="card"><div class="card-title">Recent Purchases</div><div class="scroll-table"><table><thead id="purchasesTableHead"></thead><tbody id="purchasesTableBody"></tbody></table></div></div>
+  </div>
+
+  <!-- ============ REFERRALS ============ -->
+  <div class="tab-content" id="tab-referrals">
+    <div class="grid">
+      <div class="card"><div class="card-title">Log a Referral</div><div id="referralsFormFields"></div>
+        <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('referrals','addReferral')">+ Add Referral</button>
+        <div id="referralsResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Tracks who referred a client and how many times, per your REFERRALS sheet. See the golden-window rule in the Home tip box: ask 24–72 hours after a client confirms satisfaction, not before, not weeks later.</div></div>
+    </div>
+    <div class="card"><div class="card-title">All Referrals</div><div class="scroll-table"><table><thead id="referralsTableHead"></thead><tbody id="referralsTableBody"></tbody></table></div></div>
+  </div>
+
+  <!-- ============ CALLS & MESSAGES ============ -->
+  <div class="tab-content" id="tab-callsmsgs">
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Log a Call</div>
+        <div class="field-row">
+          <div class="field"><label>Business / Client</label><input type="text" id="callBusiness"></div>
+          <div class="field"><label>Number</label><input type="text" id="callNumber"></div>
+        </div>
+        <div class="field"><label>Notes</label><input type="text" id="callNotes"></div>
+        <div class="field-row">
+          <div class="field"><label>Next Action</label><input type="text" id="callNextAction"></div>
+          <div class="field"><label>Next Follow-Up Date</label><input type="date" id="callNextFollowUp"></div>
+        </div>
+        <button class="refresh-btn" style="width:100%" onclick="submitCall()">+ Log Call</button>
+        <div id="callResult" style="margin-top:6px;font-size:12px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Log a Message</div>
+        <div class="field-row">
+          <div class="field"><label>Business / Client</label><input type="text" id="msgBusiness"></div>
+          <div class="field"><label>Channel</label><select id="msgChannel"><option>WhatsApp</option><option>SMS</option><option>Email</option><option>In Person</option></select></div>
+        </div>
+        <div class="field"><label>Summary</label><input type="text" id="msgSummary"></div>
+        <button class="refresh-btn" style="width:100%" onclick="submitMessage()">+ Log Message</button>
+        <div id="msgResult" style="margin-top:6px;font-size:12px"></div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="card-title">Recent Calls</div><div class="scroll-table"><table><thead><tr><th>Date</th><th>Business</th><th>Number</th><th>Notes</th><th>Next Action</th><th>Follow Up</th></tr></thead><tbody id="callsTableBody"></tbody></table></div></div>
+      <div class="card"><div class="card-title">Recent Messages</div><div class="scroll-table"><table><thead><tr><th>Date</th><th>Business</th><th>Channel</th><th>Summary</th></tr></thead><tbody id="messagesTableBody"></tbody></table></div></div>
+    </div>
+  </div>
+
+  <!-- ============ ARCHIVE ============ -->
+  <div class="tab-content" id="tab-archive">
+    <div class="card">
+      <div class="card-title">Archived Debtors &amp; Creditors<span class="mono" id="archiveCountBadge"></span></div>
+      <div class="section-note">Cleared accounts live here once swept from the live Debtors &amp; Creditors table. Nothing is deleted — restore any entry back to the live table if needed.</div>
+      <input type="text" id="archiveSearch" placeholder="Search archived name..." oninput="renderArchiveFiltered()" style="margin-bottom:12px">
+      <div class="scroll-table"><table><thead><tr><th>Archived</th><th>Type</th><th>Name</th><th>Owed</th><th>Paid</th><th>Reason</th><th></th></tr></thead><tbody id="archiveTableBody"></tbody></table></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Archived Sales<span class="mono" id="archiveSalesCountBadge"></span></div>
+      <div class="section-note">Old Daily Sales rows, once swept, live here so the live sales table stays fast. Nothing is deleted — restore any row back to the end of Daily Sales.</div>
+      <div class="field-row" style="align-items:end">
+        <div class="field"><label>Sweep sales older than (months)</label><input type="number" id="sweepSalesMonths" value="12"></div>
+        <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="sweepArchiveSales()">Sweep old sales to Archive</button></div>
+      </div>
+      <div id="sweepSalesResult" style="margin-bottom:10px;font-size:12px"></div>
+      <div class="scroll-table"><table><thead><tr><th>Archived</th><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th></th></tr></thead><tbody id="archiveSalesTableBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- ============ AI ASSISTANT ============ -->
+  <div class="tab-content" id="tab-assistant">
+    <div class="card">
+      <div class="card-title">CORAZON Assistant</div>
+      <div class="section-note">Ask about revenue pace, which clients to chase, how to word a follow-up or a referral ask, or anything else about running the business. It sees your live revenue, follow-up and client-health numbers when you ask. Requires an <code>ANTHROPIC_API_KEY</code> set in Apps Script Script Properties — see the Setup tab for the one-time step.</div>
+      <div class="chat-box">
+        <div class="chat-log" id="chatLog"></div>
+        <div class="chat-input-row">
+          <input type="text" id="chatInput" placeholder="e.g. Which clients should I follow up with today?" onkeydown="if(event.key==='Enter') sendChat()">
+          <button class="refresh-btn" onclick="sendChat()" id="chatSendBtn">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SETUP ============ -->
+  <div class="tab-content" id="tab-setup">
+    <div class="card">
+      <div class="card-title">Business Identity</div>
+      <div class="section-note">This only controls how the dashboard displays itself — it does not touch your existing SETUP tab (product catalog, tax codes, etc).</div>
+      <div class="field-row">
+        <div class="field"><label>Business Name</label><input type="text" id="setupBusinessName"></div>
+        <div class="field"><label>Industry</label><input type="text" id="setupIndustry"></div>
+      </div>
+      <label>Theme</label>
+      <div class="swatch-row" id="themeSwatches"></div>
+      <div class="field-row" style="margin-top:14px">
+        <div class="field"><label>Monthly Revenue Target (GHS)</label><input type="number" id="setupMonthlyTarget"></div>
+        <div class="field"><label>Working Days / Month</label><input type="number" id="setupWorkingDays"></div>
+      </div>
+      <button class="refresh-btn" onclick="saveSetup()">Save Settings</button>
+      <div id="setupResult" style="margin-top:8px;font-size:12px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">AI Assistant Setup (one-time)</div>
+      <div class="section-note">
+        1. Open the spreadsheet → Extensions → Apps Script.<br>
+        2. Project Settings (gear icon) → Script Properties → Add script property.<br>
+        3. Property: <code>ANTHROPIC_API_KEY</code> — Value: your Anthropic API key. Save.<br>
+        4. Reload this dashboard. The AI Assistant tab will start working immediately, no redeploy needed.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ==========================================================
+// CONFIG — paste your Apps Script /exec deployment URL here
+// ==========================================================
+const API_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+
+const THEMES = [
+  { name:'Clinical Teal',  primary:'#0d6e63', secondary:'#2f6fa3', alert:'#b3402f' },
+  { name:'Ocean Blue',     primary:'#2f6fa3', secondary:'#0d6e63', alert:'#c1493a' },
+  { name:'Amber Warmth',   primary:'#a97328', secondary:'#0d6e63', alert:'#b3402f' },
+  { name:'Rose Care',      primary:'#a3455a', secondary:'#2f6fa3', alert:'#a97328' },
+  { name:'Slate Trust',    primary:'#3d5a6c', secondary:'#0d6e63', alert:'#b3402f' }
+];
+
+// Daily tips distilled from all 4 BYINFORGH guides — WhatsApp Business
+// Operating System, Sales Playbook, Customer Service Guide, and the
+// Referral & Retention System — adapted for a hospital/medical-supplies
+// business like CORAZON.
+const TIPS = [
+  { text: "Give value before you ask for anything. When you message a hospital about a re-order, lead with something useful — a stock tip, a delivery update — before mentioning price.", source: "Sales Playbook — The One Rule" },
+  { text: "Sort every contact into Cold, Warm, or Re-engage before messaging. A warm contact (spoken before) should never get a cold-opener question.", source: "Sales Playbook — Sort Your Contacts" },
+  { text: "The golden window for asking a happy customer for a referral is 24–72 hours after they confirm they're satisfied. Wait longer and the ask loses its power.", source: "Referral & Retention System" },
+  { text: "State your price once, calmly, then stay quiet. The first person to speak after the price is stated usually loses the negotiation.", source: "Sales Playbook — The Price Conversation" },
+  { text: "Complete every field in your WhatsApp Business profile — name, category, description, hours, location pin. An incomplete profile reads as a scam risk to a cautious buyer.", source: "WhatsApp Business Operating System" },
+  { text: "80% of sales need 5 or more follow-ups. Most businesses give up after one message — every follow-up should bring something new: a fact, a result, a question.", source: "WhatsApp Business OS — The Follow-Up System" },
+  { text: "48 hours after any delivery, send a quick satisfaction check. It catches problems early and opens the golden window for a referral ask.", source: "Referral & Retention System" },
+  { text: "A customer who bought once is 60–70% more likely to buy again vs a 5–20% chance with someone new. Retention is cheaper than acquisition — check in on quiet clients before chasing new ones.", source: "Referral & Retention System" },
+  { text: "Label every client by loyalty tier: One-Time, Repeat, Loyal, Spotlight. Your Spotlight clients deserve priority service and first access to new stock.", source: "Referral & Retention System" },
+  { text: "\"I will think about it\" is usually genuine, not a no. Re-enter in 5–7 days with something new rather than repeating your last message.", source: "Sales Playbook — Objection Handling" },
+  { text: "Voice notes feel more personal than long text in Ghana. Use one for a warm re-engagement to a hospital contact who's gone quiet.", source: "Sales Playbook — The 8 Behaviour Rules" },
+  { text: "Never re-open a cold conversation just to ask for a referral or repeat an old offer. Bring a new angle — a result, a fact, a season, or a genuine check-in.", source: "Sales Playbook / Referral System" },
+  { text: "Reply to a new enquiry within 30 minutes during business hours where you can. The first response is the most important one — interest fades fast.", source: "WhatsApp Business OS — Chapter 11" },
+  { text: "Track every referral immediately: who sent them, when, what they need. A referral treated like a stranger is a wasted referral.", source: "Referral & Retention System" },
+  { text: "Set up your WhatsApp Away Message so no enquiry from a clinic or hospital ever sits unanswered overnight.", source: "WhatsApp Business OS — Chapter 10" },
+  { text: "Acknowledge a referral's success immediately — thank the referrer the moment their contact buys. Delayed thanks feels like an afterthought.", source: "Referral & Retention System" },
+  { text: "Update your product catalogue regularly. A stale catalogue costs enquiries — every update is also a reason to message your customer list.", source: "WhatsApp Business OS — Chapter 3" },
+  { text: "When a client goes quiet for 30–60 days, re-enter with something specific: a new product that made you think of them, not a generic \"checking in\".", source: "WhatsApp Business OS — Chapter 12" },
+  { text: "Name their specific need when reaching out — a generic message reads like a template. Specificity signals you're paying attention.", source: "Sales Playbook — The 8 Behaviour Rules" },
+  { text: "One sale a day, compounded, adds up fast. Consistency beats intensity — show up in the dashboard every day rather than in bursts.", source: "WhatsApp Business OS — The Operating System" },
+  { text: "Your phone goes down the moment a customer walks in or calls. A customer who feels ignored for even a few seconds decides how the rest of the relationship will feel.", source: "Customer Service Guide — Your Presence" },
+  { text: "Every customer gets a greeting within seconds — eye contact, a smile, a simple 'how can I help?'. It costs nothing and it's the difference between a customer who stays and one who leaves.", source: "Customer Service Guide — The Greeting" },
+  { text: "Never guess a price or say 'I don't know' about your own stock. If you're not sure, say 'let me find out right now' — and then actually find out.", source: "Customer Service Guide — Know Your Products" },
+  { text: "A WhatsApp message left on two ticks with no reply, while you're clearly online, is one of the fastest ways to destroy trust before a client has even met you.", source: "Customer Service Guide — WhatsApp Communication" },
+  { text: "When a client brings back a problem, lead with 'let me look into this for you' — never 'it was fine when we sold it'. Investigate before you conclude, even if you're sure they're wrong.", source: "Customer Service Guide — Handling Difficult Situations" },
+  { text: "Reputation is built one interaction at a time — consistent good service, following through on what you said you'd do, and treating every client the same whether the order is big or small.", source: "Customer Service Guide — Building Your Reputation" },
+  { text: "If you don't have what a client needs, never leave it at 'we don't have it'. Suggest an alternative, give a date it's back in stock, or offer to contact them when it arrives.", source: "Customer Service Guide — Handling Difficult Situations" },
+  { text: "Sort clients into loyalty tiers — One-Time, Repeat, Loyal, Spotlight — and treat each differently. Your Spotlight clients should hear from you before they ever have to chase you.", source: "Referral & Retention System — Loyalty Tiers" },
+  { text: "A client who goes quiet almost never chose a competitor — they just got busy and stopped being contacted. Re-enter with something new, never with 'just checking in'.", source: "Referral & Retention System — Re-Activation" },
+  { text: "When negotiating price, don't reduce the number — offer a smaller entry point instead. 'Let's start with the smaller order so you can see the value first' protects your price and still moves things forward.", source: "Sales Playbook — The Price Conversation" }
+];
+
+let state = { settings:{}, dailySales:{rows:[]}, debtorsCreditors:{}, expenses:{rows:[]}, clients:{rows:[]}, inventory:{rows:[]}, purchases:{rows:[]}, referrals:{rows:[]}, revenue:{}, followUps:{items:[]}, tracker:{}, callsMessages:{calls:[],messages:[]}, archive:{rows:[]}, archiveSales:{rows:[]}, clientHealth:{rows:[],counts:{}} };
+let tipIndex = (function(){ const d = new Date(); const dayOfYear = Math.floor((d - new Date(d.getFullYear(),0,0))/86400000); return dayOfYear % TIPS.length; })();
+let chatHistory = [];
+
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
+function switchTab(name, btn){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+}
+function fmtMoney(v){ v = parseFloat(v)||0; return 'GHS ' + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtMoneyShort(v){ v = parseFloat(v)||0; return 'GHS ' + Math.round(v).toLocaleString(); }
+
+function renderTip(){
+  const tip = TIPS[tipIndex % TIPS.length];
+  document.getElementById('tipText').textContent = tip.text;
+  document.getElementById('tipSource').textContent = tip.source;
+}
+function nextTip(){ tipIndex++; renderTip(); }
+
+async function loadData(){
+  document.getElementById('lastRefresh').textContent = 'Refreshing...';
+  if(API_URL.indexOf('PASTE_YOUR') === 0){
+    document.getElementById('lastRefresh').textContent = 'Not connected — paste your Apps Script URL into API_URL';
+    renderTip();
+    return;
+  }
+  try{
+    const res = await fetch(API_URL + '?t=' + Date.now());
+    const data = await res.json();
+    state = Object.assign(state, data);
+    applySettings();
+    renderHome(); renderFollowUpsFull(); renderTracker();
+    renderSales(); renderExpenses(); renderDebtorsCreditors();
+    renderClients(); renderInventory(); renderPurchases(); renderReferrals();
+    renderCallsMessages(); renderArchive(); renderArchiveSales(); renderClientHealth();
+    renderTip();
+    document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  }catch(e){
+    document.getElementById('lastRefresh').textContent = 'Offline — check connection';
+    console.log('Load error', e);
+  }
+}
+
+function applySettings(){
+  const s = state.settings || {};
+  document.getElementById('brandName').textContent = s.business_name || 'CORAZON';
+  document.getElementById('brandMark').textContent = (s.business_name||'C').charAt(0).toUpperCase();
+  document.getElementById('brandSub').textContent = s.industry || 'Command Centre';
+  if(s.primary_color){
+    document.documentElement.style.setProperty('--teal', s.primary_color);
+    document.documentElement.style.setProperty('--teal-dim', s.primary_color + '1a');
+  }
+  if(s.secondary_color){
+    document.documentElement.style.setProperty('--blue', s.secondary_color);
+    document.documentElement.style.setProperty('--blue-dim', s.secondary_color + '1a');
+  }
+  if(s.alert_color){
+    document.documentElement.style.setProperty('--coral', s.alert_color);
+    document.documentElement.style.setProperty('--coral-dim', s.alert_color + '1a');
+  }
+  document.getElementById('setupBusinessName').value = s.business_name || '';
+  document.getElementById('setupIndustry').value = s.industry || '';
+  document.getElementById('setupMonthlyTarget').value = s.monthly_target || '0';
+  document.getElementById('setupWorkingDays').value = s.working_days || '26';
+  renderThemeSwatches(s.primary_color);
+}
+function renderThemeSwatches(current){
+  document.getElementById('themeSwatches').innerHTML = THEMES.map(t=>
+    `<div class="swatch ${t.primary===current?'selected':''}" style="background:${t.primary}" title="${t.name}" onclick="pickTheme('${t.primary}','${t.secondary}','${t.alert}')"></div>`
+  ).join('');
+}
+function pickTheme(primary, secondary, alert){
+  state.settings.primary_color = primary; state.settings.secondary_color = secondary; state.settings.alert_color = alert;
+  applySettings();
+}
+
+// ---------- HOME ----------
+function daysLabel(days){
+  if(days === null || days === undefined) return 'No date';
+  if(days < 0) return Math.abs(days) + 'd overdue';
+  if(days === 0) return 'Due today';
+  return 'In ' + days + 'd';
+}
+function daysTagClass(days){
+  if(days === null || days === undefined) return 'soon';
+  if(days < 0) return 'overdue';
+  if(days === 0) return 'today';
+  return 'soon';
+}
+function renderHome(){
+  const ds = state.dailySales || {};
+  const dc = state.debtorsCreditors || {};
+  const debtorsBal = dc.debtors && dc.debtors.summary ? dc.debtors.summary.totalBalance : 0;
+  const creditorsBal = dc.creditors && dc.creditors.summary ? dc.creditors.summary.totalBalance : 0;
+  const overdueCount = (dc.debtors && dc.debtors.summary ? dc.debtors.summary.overdueCount : 0) + (dc.creditors && dc.creditors.summary ? dc.creditors.summary.overdueCount : 0);
+
+  document.getElementById('vitalsStrip').innerHTML = `
+    <div class="vital"><div class="vital-label">Today's Revenue</div><div class="vital-value">${fmtMoney(ds.todayRevenue||0)}</div></div>
+    <div class="vital"><div class="vital-label">Today's Gross Profit</div><div class="vital-value teal">${fmtMoney(ds.todayProfit||0)}</div></div>
+    <div class="vital"><div class="vital-label">Sales Logged Today</div><div class="vital-value">${ds.todayCount||0}</div></div>
+    <div class="vital"><div class="vital-label">Owed to you</div><div class="vital-value teal">${fmtMoney(debtorsBal)}</div></div>
+    <div class="vital"><div class="vital-label">You owe</div><div class="vital-value amber">${fmtMoney(creditorsBal)}</div></div>
+    <div class="vital"><div class="vital-label">Overdue accounts</div><div class="vital-value ${overdueCount>0?'coral':''}">${overdueCount}</div></div>
+  `;
+
+  const rev = state.revenue || {};
+  const monthlyTarget = rev.monthlyTarget || 0;
+  const monthlyActual = rev.monthlyActual || 0;
+  const pct = monthlyTarget > 0 ? Math.min(150, (monthlyActual/monthlyTarget)*100) : 0;
+  if(monthlyTarget <= 0){
+    document.getElementById('revenueBlock').innerHTML = `<div class="section-note">No monthly target set yet. Go to Setup to add one and this bar will track your pace automatically.</div>`;
+  } else {
+    document.getElementById('revenueBlock').innerHTML = `
+      <div class="summary-row" style="margin-bottom:6px">
+        <div class="summary-chip"><div class="summary-chip-label">Today</div><div class="summary-chip-value">${fmtMoneyShort(rev.dailyActual)}</div></div>
+        <div class="summary-chip blue"><div class="summary-chip-label">This Week</div><div class="summary-chip-value">${fmtMoneyShort(rev.weeklyActual)}</div></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-dim);display:flex;justify-content:space-between">
+        <span>${fmtMoneyShort(monthlyActual)} of ${fmtMoneyShort(monthlyTarget)} target</span>
+        <span class="mono">${pct.toFixed(0)}%</span>
+      </div>
+      <div class="progress-outer"><div class="progress-inner ${pct>100?'over':''}" style="width:${Math.min(100,pct)}%"></div></div>
+      <div style="font-size:11.5px;color:var(--ink-dim);margin-top:8px">
+        ${rev.gapToTarget>0 ? 'GHS '+Math.round(rev.gapToTarget).toLocaleString()+' left to reach target' : 'Target reached — great month'}
+        · pace ${rev.pacePct?rev.pacePct.toFixed(0):0}% of expected-by-today
+      </div>
+    `;
+  }
+
+  const fu = state.followUps || { items: [] };
+  document.getElementById('followUpCountBadge').textContent = fu.items && fu.items.length ? ' ('+fu.items.length+')' : '';
+  const topFu = (fu.items||[]).slice(0,6);
+  document.getElementById('homeFollowUps').innerHTML = topFu.length ? topFu.map(i=>`
+    <div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
+      <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}</span></div>
+      <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
+    </div>
+  `).join('') : '<div class="empty">Nothing due — clean books</div>';
+
+  const debtorsRows = (dc.debtors && dc.debtors.rows) || [];
+  const creditorsRows = (dc.creditors && dc.creditors.rows) || [];
+  const dCleared = debtorsRows.filter(r=>r.balance<=0).length;
+  const dOverdue = debtorsRows.filter(r=>r.balance>0 && r.daysOverdue>0).length;
+  const dPending = debtorsRows.filter(r=>r.balance>0 && r.daysOverdue<=0).length;
+  const cCleared = creditorsRows.filter(r=>r.balance<=0).length;
+  const cOverdue = creditorsRows.filter(r=>r.balance>0 && r.daysOverdue>0).length;
+  const cPending = creditorsRows.filter(r=>r.balance>0 && r.daysOverdue<=0).length;
+  document.getElementById('statusBoard').innerHTML = `
+    <div class="status-cell"><div class="num" style="color:var(--teal)">${dCleared+cCleared}</div><div class="lbl">Cleared</div></div>
+    <div class="status-cell"><div class="num" style="color:var(--amber)">${dPending+cPending}</div><div class="lbl">Pending</div></div>
+    <div class="status-cell"><div class="num" style="color:var(--coral)">${dOverdue+cOverdue}</div><div class="lbl">Overdue</div></div>
+    <div class="status-cell"><div class="num">${debtorsRows.length+creditorsRows.length}</div><div class="lbl">Total Accounts</div></div>
+  `;
+
+  const health = state.clientHealth || { counts: {} };
+  const c = health.counts || {};
+  document.getElementById('healthCountBadge').textContent = health.rows && health.rows.length ? ' ('+health.rows.length+')' : '';
+  document.getElementById('homeHealthBoard').innerHTML = `
+    <div class="health-cell active"><div class="num">${c.active||0}</div><div class="lbl">🟢 Active</div></div>
+    <div class="health-cell due"><div class="num">${c.due||0}</div><div class="lbl">🟡 Due</div></div>
+    <div class="health-cell overdue"><div class="num">${c.overdue||0}</div><div class="lbl">🔴 Overdue</div></div>
+    <div class="health-cell dormant"><div class="num">${c.dormant||0}</div><div class="lbl">⚫ Dormant</div></div>
+  `;
+
+  const recent = (ds.rows||[]).slice(0,8);
+  document.getElementById('homeRecentSales').innerHTML = recent.length ? recent.map(r=>
+    `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
+      <div><strong>${r.product||'—'}</strong><br><span style="color:var(--ink-dim);font-size:11px">${r.customer||'—'} · ${r.date||''}</span></div>
+      <div class="mono" style="text-align:right">${fmtMoney(r.revenue)}</div>
+    </div>`).join('') : '<div class="empty">No sales logged yet</div>';
+
+  const cm = state.callsMessages || { calls: [], messages: [] };
+  let activity = [];
+  (cm.calls||[]).slice(0,10).forEach(c=>activity.push({icon:'📞',label:c.business||'—',detail:c.notes||'Call logged',date:c.date}));
+  (cm.messages||[]).slice(0,10).forEach(m=>activity.push({icon:'💬',label:m.business||'—',detail:(m.channel||'')+' — '+(m.summary||''),date:m.date}));
+  (ds.rows||[]).slice(0,10).forEach(r=>activity.push({icon:'🧾',label:r.customer||'—',detail:'Sale — '+(r.product||''),date:r.date}));
+  activity = activity.slice(0,10);
+  document.getElementById('homeActivity').innerHTML = activity.length ? activity.map(a=>`
+    <div class="activity-item"><div class="activity-icon">${a.icon}</div>
+      <div><strong>${a.label}</strong><br><span style="color:var(--ink-dim)">${a.detail} · ${a.date}</span></div>
+    </div>`).join('') : '<div class="empty">No activity logged yet</div>';
+}
+
+async function quickLogCall(){
+  const business = document.getElementById('hcBusiness').value.trim();
+  if(!business){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
+  const params = { business: business, number: document.getElementById('hcNumber').value.trim(), notes: document.getElementById('hcNotes').value.trim(),
+    nextAction: document.getElementById('hcNextAction').value.trim(),
+    nextFollowUp: document.getElementById('hcNextFollowUp').value ? document.getElementById('hcNextFollowUp').value.split('-').reverse().join('/') : '' };
+  document.getElementById('hcResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['hcBusiness','hcNumber','hcNotes','hcNextAction','hcNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
+    else document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function quickLogMessage(){
+  const business = document.getElementById('hmBusiness').value.trim();
+  if(!business){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
+  const params = { business: business, channel: document.getElementById('hmChannel').value, summary: document.getElementById('hmSummary').value.trim() };
+  document.getElementById('hmResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['hmBusiness','hmSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
+    else document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+// ---------- FOLLOW-UPS (full tab) ----------
+function renderFollowUpsFull(){
+  const fu = state.followUps || { items: [] };
+  const items = fu.items || [];
+  if(!items.length){ document.getElementById('followUpsFull').innerHTML = '<div class="empty">Nothing due or overdue right now</div>'; return; }
+  const overdue = items.filter(i=>i.daysUntil!==null && i.daysUntil<0);
+  const today = items.filter(i=>i.daysUntil===0);
+  const soon = items.filter(i=>i.daysUntil!==null && i.daysUntil>0);
+  const none = items.filter(i=>i.daysUntil===null);
+  function block(title, list){
+    if(!list.length) return '';
+    return `<div style="margin-bottom:16px"><div class="card-title" style="margin-bottom:8px">${title} (${list.length})</div>` +
+      list.map(i=>`<div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
+        <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}${i.dueDate?' · due '+i.dueDate:''}</span></div>
+        <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
+      </div>`).join('') + `</div>`;
+  }
+  document.getElementById('followUpsFull').innerHTML = block('Overdue', overdue) + block('Due Today', today) + block('Due Soon', soon) + block('No Date Set', none);
+}
+
+// ---------- TRACKER ----------
+function renderTracker(){
+  const t = state.tracker || {};
+  const trend = t.monthlyTrend || [];
+  if(trend.length){
+    const maxVal = Math.max.apply(null, trend.map(m=>m.revenue)) || 1;
+    document.getElementById('trendChart').innerHTML = `<div class="bar-chart">` + trend.map(m=>{
+      const h = Math.max(4, (m.revenue/maxVal)*120);
+      return `<div class="bar-col"><div class="bar-value">${fmtMoneyShort(m.revenue)}</div><div class="bar" style="height:${h}px"></div><div class="bar-label">${m.label}</div></div>`;
+    }).join('') + `</div>`;
+  } else {
+    document.getElementById('trendChart').innerHTML = '<div class="empty">No sales history yet</div>';
+  }
+
+  const top = t.topClients || [];
+  document.getElementById('topClientsList').innerHTML = top.length ? top.map((c,i)=>`
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
+      <div><span class="mono" style="color:var(--ink-dim)">#${i+1}</span> <strong>${c.name}</strong></div>
+      <div class="mono">${fmtMoney(c.revenue)}</div>
+    </div>`).join('') : '<div class="empty">No sales history yet</div>';
+
+  const aging = t.aging || {d0_30:0,d31_60:0,d61_90:0,d90plus:0};
+  const maxAging = Math.max(aging.d0_30, aging.d31_60, aging.d61_90, aging.d90plus, 1);
+  function agingRow(label, val, cls){
+    const pct = Math.max(2,(val/maxAging)*100);
+    return `<div class="aging-row"><div class="aging-label">${label}</div><div class="aging-bar-outer"><div class="aging-bar-inner ${cls}" style="width:${pct}%"></div></div><div class="aging-value">${fmtMoneyShort(val)}</div></div>`;
+  }
+  document.getElementById('agingChart').innerHTML =
+    agingRow('0–30d', aging.d0_30, '') +
+    agingRow('31–60d', aging.d31_60, 'warn') +
+    agingRow('61–90d', aging.d61_90, 'warn') +
+    agingRow('90d+', aging.d90plus, 'danger');
+}
+
+// ---------- CLIENT HEALTH (reorder pipeline) ----------
+function renderClientHealth(){
+  const health = state.clientHealth || { rows: [], counts: {} };
+  const c = health.counts || {};
+  const boardHtml = `
+    <div class="health-cell active"><div class="num">${c.active||0}</div><div class="lbl">🟢 Active</div></div>
+    <div class="health-cell due"><div class="num">${c.due||0}</div><div class="lbl">🟡 Due</div></div>
+    <div class="health-cell overdue"><div class="num">${c.overdue||0}</div><div class="lbl">🔴 Overdue</div></div>
+    <div class="health-cell dormant"><div class="num">${c.dormant||0}</div><div class="lbl">⚫ Dormant</div></div>
+  `;
+  document.getElementById('healthBoardFull').innerHTML = boardHtml;
+  const rows = health.rows || [];
+  document.getElementById('healthTableBody').innerHTML = rows.length ? rows.map(r=>
+    `<tr><td>${r.customer}</td><td>${r.label}</td><td>${r.lastOrder}</td><td class="mono">${r.daysSince}d</td><td class="mono">${fmtMoney(r.totalRevenue)}</td></tr>`
+  ).join('') : '<tr><td colspan="5" class="empty">No client order history yet</td></tr>';
+}
+
+// ---------- DAILY SALES ----------
+function renderSales(){
+  const ds = state.dailySales || {};
+  document.getElementById('salesSummaryChips').innerHTML = `
+    <div class="summary-chip"><div class="summary-chip-label">Today Revenue</div><div class="summary-chip-value">${fmtMoney(ds.todayRevenue||0)}</div></div>
+    <div class="summary-chip"><div class="summary-chip-label">Today Profit</div><div class="summary-chip-value">${fmtMoney(ds.todayProfit||0)}</div></div>
+    <div class="summary-chip blue"><div class="summary-chip-label">All-Time Revenue</div><div class="summary-chip-value">${fmtMoney(ds.totalRevenue||0)}</div></div>
+    <div class="summary-chip blue"><div class="summary-chip-label">All-Time Profit</div><div class="summary-chip-value">${fmtMoney(ds.totalProfit||0)}</div></div>
+  `;
+  const rows = ds.rows || [];
+  document.getElementById('salesTableBody').innerHTML = rows.length ? rows.map(r=>
+    `<tr><td>${r.date||''}</td><td>${r.customer||''}</td><td>${r.product||''}</td><td>${r.qty||''}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td></tr>`
+  ).join('') : '<tr><td colspan="6" class="empty">No sales yet</td></tr>';
+  if(!document.getElementById('saleDate').value) document.getElementById('saleDate').valueAsDate = new Date();
+}
+async function submitSale(){
+  const date = document.getElementById('saleDate').value;
+  const ddmmyyyy = date ? date.split('-').reverse().join('/') : '';
+  const customer = document.getElementById('saleCustomer').value.trim();
+  const stockCode = document.getElementById('saleStockCode').value.trim();
+  const qty = document.getElementById('saleQty').value;
+  const discount = document.getElementById('saleDiscount').value.trim();
+  const tax = document.getElementById('saleTax').value.trim();
+  const resultEl = document.getElementById('saleResult');
+  if(!stockCode || !qty){ resultEl.innerHTML = '<span style="color:var(--coral)">Stock code and quantity are required.</span>'; return; }
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const url = API_URL + '?action=addSale&date=' + encodeURIComponent(ddmmyyyy) + '&customer=' + encodeURIComponent(customer)
+      + '&stockCode=' + encodeURIComponent(stockCode) + '&qty=' + encodeURIComponent(qty)
+      + '&discountPct=' + encodeURIComponent(discount) + '&taxPct=' + encodeURIComponent(tax) + '&t=' + Date.now();
+    const res = await fetch(url); const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved — row ' + data.row + '</span>';
+      showToast('Sale logged');
+      ['saleCustomer','saleStockCode','saleQty','saleDiscount','saleTax'].forEach(id=>document.getElementById(id).value='');
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+// ---------- GENERIC TABS (Expenses, Clients, Purchases, Referrals) ----------
+function buildGenericForm(containerId, headers, prefix){
+  const el = document.getElementById(containerId);
+  if(!headers || !headers.length){ el.innerHTML = '<div class="section-note">No headers detected yet on this sheet — add a header row first.</div>'; return; }
+  el.innerHTML = headers.map((h,i)=>{
+    const id = prefix + '_' + i;
+    const isDate = /date/i.test(h);
+    return `<div class="field"><label>${h}</label><input type="${isDate?'date':'text'}" id="${id}" data-header="${h.replace(/"/g,'&quot;')}"></div>`;
+  }).join('');
+}
+async function submitGenericAdd(stateKey, action){
+  const headers = (state[stateKey] && state[stateKey].headers) || [];
+  const prefix = stateKey;
+  const params = {};
+  headers.forEach((h,i)=>{
+    const inp = document.getElementById(prefix + '_' + i);
+    if(!inp) return;
+    let val = inp.value;
+    if(inp.type === 'date' && val) val = val.split('-').reverse().join('/');
+    if(val) params[h] = val;
+  });
+  const resultEl = document.getElementById(stateKey + 'Result');
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const url = API_URL + '?action=' + action + '&' + qs + '&t=' + Date.now();
+    const res = await fetch(url); const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved — row ' + data.row + '</span>';
+      showToast('Saved');
+      headers.forEach((h,i)=>{ const inp = document.getElementById(prefix+'_'+i); if(inp) inp.value=''; });
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+function renderGenericTable(stateKey, headEl, bodyEl){
+  const t = state[stateKey] || { headers:[], rows:[] };
+  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(-200).reverse().map(r=>
+    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No entries yet</td></tr>`;
+}
+
+function renderExpenses(){ buildGenericForm('expenseFormFields', (state.expenses||{}).headers, 'expenses'); renderGenericTable('expenses','expensesTableHead','expensesTableBody'); }
+function renderClients(){ buildGenericForm('clientsFormFields', (state.clients||{}).headers, 'clients'); renderGenericTable('clients','clientsTableHead','clientsTableBody'); }
+function renderPurchases(){ buildGenericForm('purchasesFormFields', (state.purchases||{}).headers, 'purchases'); renderGenericTable('purchases','purchasesTableHead','purchasesTableBody'); }
+function renderReferrals(){ buildGenericForm('referralsFormFields', (state.referrals||{}).headers, 'referrals'); renderGenericTable('referrals','referralsTableHead','referralsTableBody'); }
+
+// ---------- INVENTORY (read-only) ----------
+function renderInventory(){
+  const t = state.inventory || { headers:[], rows:[] };
+  document.getElementById('inventoryTableHead').innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  const q = (document.getElementById('inventorySearch').value||'').toLowerCase();
+  const rows = (t.rows||[]).filter(r=> !q || Object.values(r).some(v=>(v||'').toString().toLowerCase().includes(q)));
+  document.getElementById('inventoryTableBody').innerHTML = rows.length ? rows.slice(0,300).map(r=>
+    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No matching items</td></tr>`;
+}
+
+// ---------- DEBTORS & CREDITORS ----------
+function renderDebtorsCreditors(){
+  const dc = state.debtorsCreditors || {};
+  renderDCTable('debtors', dc.debtors, 'debtorsSummaryChips', 'debtorsTableBody');
+  renderDCTable('creditors', dc.creditors, 'creditorsSummaryChips', 'creditorsTableBody');
+}
+function renderDCTable(kind, table, chipsEl, bodyEl){
+  table = table || { rows:[], summary:{totalOwed:0,totalPaid:0,totalBalance:0,overdueCount:0} };
+  const s = table.summary || {totalOwed:0,totalPaid:0,totalBalance:0,overdueCount:0};
+  document.getElementById(chipsEl).innerHTML = `
+    <div class="summary-chip"><div class="summary-chip-label">Total ${kind==='debtors'?'Owed':'Owed'}</div><div class="summary-chip-value">${fmtMoney(s.totalOwed)}</div></div>
+    <div class="summary-chip blue"><div class="summary-chip-label">Paid</div><div class="summary-chip-value">${fmtMoney(s.totalPaid)}</div></div>
+    <div class="summary-chip ${s.totalBalance>0?'amber':''}"><div class="summary-chip-label">Balance</div><div class="summary-chip-value">${fmtMoney(s.totalBalance)}</div></div>
+    <div class="summary-chip ${s.overdueCount>0?'coral':''}"><div class="summary-chip-label">Overdue</div><div class="summary-chip-value">${s.overdueCount}</div></div>
+  `;
+  const rows = table.rows || [];
+  document.getElementById(bodyEl).innerHTML = rows.length ? rows.map(r=>{
+    const statusBadge = r.balance <= 0 ? '<span class="badge cleared">Cleared</span>' : (r.daysOverdue>0 ? '<span class="badge overdue">Overdue</span>' : '<span class="badge pending">Pending</span>');
+    const actionBtn = r.balance>0
+      ? `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="markCleared('${kind}',${r.row},${r.amountOwed})">Mark cleared</button>`
+      : `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="archiveOne('${kind}',${r.row},'${(r.name||'').replace(/'/g,"\\'")}')">Archive</button>`;
+    return `<tr><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td class="mono">${fmtMoney(r.balance)}</td><td>${statusBadge}</td>
+      <td>${actionBtn}</td></tr>`;
+  }).join('') : '<tr><td colspan="6" class="empty">Nothing here yet</td></tr>';
+}
+async function submitDebtorCreditor(kind){
+  const p = kind === 'debtor' ? 'debtor' : 'creditor';
+  const action = kind === 'debtor' ? 'addDebtor' : 'addCreditor';
+  const name = document.getElementById(p+'Name').value.trim();
+  const contact = document.getElementById(p+'Contact').value.trim();
+  const amountOwed = document.getElementById(p+'AmountOwed').value;
+  const amountPaid = document.getElementById(p+'AmountPaid').value || '0';
+  const invoiceDate = document.getElementById(p+'InvoiceDate').value;
+  const dueDate = document.getElementById(p+'DueDate').value;
+  const paymentMethod = document.getElementById(p+'PaymentMethod').value;
+  const notes = document.getElementById(p+'Notes').value.trim();
+  const resultEl = document.getElementById(p+'Result');
+  if(!name || !amountOwed){ resultEl.innerHTML = '<span style="color:var(--coral)">Name and amount owed are required.</span>'; return; }
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const url = API_URL + '?action=' + action + '&name=' + encodeURIComponent(name) + '&contact=' + encodeURIComponent(contact)
+      + '&amountOwed=' + encodeURIComponent(amountOwed) + '&amountPaid=' + encodeURIComponent(amountPaid)
+      + '&invoiceDate=' + encodeURIComponent(invoiceDate ? invoiceDate.split('-').reverse().join('/') : '')
+      + '&dueDate=' + encodeURIComponent(dueDate ? dueDate.split('-').reverse().join('/') : '')
+      + '&paymentMethod=' + encodeURIComponent(paymentMethod) + '&notes=' + encodeURIComponent(notes) + '&t=' + Date.now();
+    const res = await fetch(url); const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
+      showToast((kind==='debtor'?'Debtor':'Creditor') + ' added');
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function markCleared(kind, row, amountOwed){
+  try{
+    const url = API_URL + '?action=markCleared&row=' + row + '&amountPaid=' + amountOwed + '&table=' + kind + '&t=' + Date.now();
+    await fetch(url);
+    showToast('Marked cleared');
+    loadData();
+  }catch(e){ showToast('Connection error'); }
+}
+async function archiveOne(kind, row, name){
+  try{
+    const url = API_URL + '?action=archiveDC&row=' + row + '&table=' + kind + '&reason=' + encodeURIComponent('Archived from dashboard') + '&t=' + Date.now();
+    await fetch(url);
+    showToast(name + ' archived');
+    loadData();
+  }catch(e){ showToast('Connection error'); }
+}
+async function sweepArchive(){
+  const el = document.getElementById('sweepResult');
+  el.innerHTML = '<span style="color:var(--ink-dim)">Sweeping...</span>';
+  try{
+    const res = await fetch(API_URL + '?action=sweepArchiveDC&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' account(s) archived</span>'; showToast('Archive swept'); loadData(); }
+    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
+  }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+// ---------- CALLS & MESSAGES ----------
+async function submitCall(){
+  const business = document.getElementById('callBusiness').value.trim();
+  const resultEl = document.getElementById('callResult');
+  if(!business){ resultEl.innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
+  const params = { business: business, number: document.getElementById('callNumber').value.trim(), notes: document.getElementById('callNotes').value.trim(),
+    nextAction: document.getElementById('callNextAction').value.trim(),
+    nextFollowUp: document.getElementById('callNextFollowUp').value ? document.getElementById('callNextFollowUp').value.split('-').reverse().join('/') : '' };
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['callBusiness','callNumber','callNotes','callNextAction','callNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
+    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function submitMessage(){
+  const business = document.getElementById('msgBusiness').value.trim();
+  const resultEl = document.getElementById('msgResult');
+  if(!business){ resultEl.innerHTML = '<span style="color:var(--coral)">Business name required.</span>'; return; }
+  const params = { business: business, channel: document.getElementById('msgChannel').value, summary: document.getElementById('msgSummary').value.trim() };
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['msgBusiness','msgSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
+    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+function renderCallsMessages(){
+  const cm = state.callsMessages || { calls: [], messages: [] };
+  const calls = cm.calls || [];
+  document.getElementById('callsTableBody').innerHTML = calls.length ? calls.map(c=>
+    `<tr><td>${c.date||''}</td><td>${c.business||''}</td><td>${c.number||''}</td><td>${c.notes||''}</td><td>${c.nextAction||''}</td><td>${c.nextFollowUp||''}</td></tr>`
+  ).join('') : '<tr><td colspan="6" class="empty">No calls logged yet</td></tr>';
+  const messages = cm.messages || [];
+  document.getElementById('messagesTableBody').innerHTML = messages.length ? messages.map(m=>
+    `<tr><td>${m.date||''}</td><td>${m.business||''}</td><td>${m.channel||''}</td><td>${m.summary||''}</td></tr>`
+  ).join('') : '<tr><td colspan="4" class="empty">No messages logged yet</td></tr>';
+}
+
+// ---------- ARCHIVE (Debtors/Creditors) ----------
+function renderArchive(){
+  const arch = state.archive || { rows: [] };
+  document.getElementById('archiveCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
+  renderArchiveFiltered();
+}
+function renderArchiveFiltered(){
+  const arch = state.archive || { rows: [] };
+  const q = (document.getElementById('archiveSearch').value||'').toLowerCase();
+  const rows = (arch.rows||[]).filter(r=> !q || (r.name||'').toLowerCase().includes(q));
+  document.getElementById('archiveTableBody').innerHTML = rows.length ? rows.map(r=>
+    `<tr><td>${r.archivedDate}</td><td><span class="badge blue">${r.type}</span></td><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td>${r.reason}</td>
+      <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchived(${r.row})">Restore</button></td></tr>`
+  ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
+}
+async function restoreArchived(row){
+  try{
+    const res = await fetch(API_URL + '?action=restoreDC&row=' + row + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ showToast('Restored to live table'); loadData(); }
+    else showToast(data.error || 'Could not restore');
+  }catch(e){ showToast('Connection error'); }
+}
+
+// ---------- ARCHIVE (Sales) — v3.0 ----------
+function renderArchiveSales(){
+  const arch = state.archiveSales || { rows: [] };
+  document.getElementById('archiveSalesCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
+  const rows = arch.rows || [];
+  document.getElementById('archiveSalesTableBody').innerHTML = rows.length ? rows.map(r=>
+    `<tr><td>${r.archivedDate}</td><td>${r.date}</td><td>${r.customer}</td><td>${r.product}</td><td>${r.qty}</td><td class="mono">${fmtMoney(r.revenue)}</td>
+      <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchivedSale(${r.row})">Restore</button></td></tr>`
+  ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
+}
+async function sweepArchiveSales(){
+  const months = document.getElementById('sweepSalesMonths').value || '12';
+  const el = document.getElementById('sweepSalesResult');
+  el.innerHTML = '<span style="color:var(--ink-dim)">Sweeping...</span>';
+  try{
+    const res = await fetch(API_URL + '?action=sweepArchiveSales&months=' + encodeURIComponent(months) + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' sale(s) archived</span>'; showToast('Sales archive swept'); loadData(); }
+    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
+  }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function restoreArchivedSale(row){
+  try{
+    const res = await fetch(API_URL + '?action=restoreArchiveSale&row=' + row + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ showToast('Restored to Daily Sales'); loadData(); }
+    else showToast(data.error || 'Could not restore');
+  }catch(e){ showToast('Connection error'); }
+}
+
+// ---------- AI ASSISTANT — v3.0 ----------
+function buildDashboardContext(){
+  const rev = state.revenue || {};
+  const fu = state.followUps || { items: [] };
+  const health = state.clientHealth || { counts: {} };
+  const dc = state.debtorsCreditors || {};
+  const overdueFu = (fu.items||[]).filter(i=>i.daysUntil!==null && i.daysUntil<0).slice(0,8).map(i=>`${i.name} (${i.kind}: ${i.detail})`).join('; ');
+  return [
+    `Monthly revenue: GHS ${Math.round(rev.monthlyActual||0)} of GHS ${Math.round(rev.monthlyTarget||0)} target (pace ${(rev.pacePct||0).toFixed(0)}%).`,
+    `Client reorder pipeline: ${health.counts && health.counts.active||0} active, ${health.counts && health.counts.due||0} due, ${health.counts && health.counts.overdue||0} overdue, ${health.counts && health.counts.dormant||0} dormant.`,
+    `Owed to business: GHS ${Math.round((dc.debtors && dc.debtors.summary && dc.debtors.summary.totalBalance)||0)}. Business owes: GHS ${Math.round((dc.creditors && dc.creditors.summary && dc.creditors.summary.totalBalance)||0)}.`,
+    overdueFu ? `Overdue follow-ups: ${overdueFu}` : 'No overdue follow-ups right now.'
+  ].join('\n');
+}
+function renderChatLog(){
+  const log = document.getElementById('chatLog');
+  log.innerHTML = chatHistory.map(m=>
+    `<div class="chat-msg ${m.role==='user'?'user':'assistant'}"><div class="bubble">${(m.content||'').toString().replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`
+  ).join('');
+  log.scrollTop = log.scrollHeight;
+}
+async function sendChat(){
+  const input = document.getElementById('chatInput');
+  const question = input.value.trim();
+  if(!question) return;
+  const btn = document.getElementById('chatSendBtn');
+  chatHistory.push({ role: 'user', content: question });
+  renderChatLog();
+  input.value = '';
+  btn.disabled = true; btn.textContent = 'Thinking...';
+  try{
+    const context = buildDashboardContext();
+    const url = API_URL + '?action=aiAsk&question=' + encodeURIComponent(question)
+      + '&history=' + encodeURIComponent(JSON.stringify(chatHistory))
+      + '&context=' + encodeURIComponent(context) + '&t=' + Date.now();
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.success){
+      chatHistory.push({ role: 'assistant', content: data.reply });
+    } else {
+      chatHistory.push({ role: 'assistant', content: 'Error: ' + (data.error||'could not reach the assistant.') });
+    }
+  }catch(e){
+    chatHistory.push({ role: 'assistant', content: 'Connection error — check the API_URL and try again.' });
+  }
+  btn.disabled = false; btn.textContent = 'Send';
+  renderChatLog();
+}
+
+// ---------- SETUP ----------
+async function saveSetup(){
+  const resultEl = document.getElementById('setupResult');
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  const s = state.settings || {};
+  const params = {
+    business_name: document.getElementById('setupBusinessName').value.trim(),
+    industry: document.getElementById('setupIndustry').value.trim(),
+    monthly_target: document.getElementById('setupMonthlyTarget').value,
+    working_days: document.getElementById('setupWorkingDays').value,
+    primary_color: s.primary_color || '#0d6e63',
+    secondary_color: s.secondary_color || '#2f6fa3',
+    alert_color: s.alert_color || '#b3402f'
+  };
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=saveSettings&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
+      showToast('Settings saved');
+      state.settings = data.settings;
+      applySettings();
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+renderTip();
+loadData();
+setInterval(loadData, 60000);
+</script>
+</body>
+</html>
