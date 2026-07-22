@@ -880,6 +880,36 @@ function safeRender(fn, label){
   catch(e){ console.log('Render error in ' + label + ':', e); }
 }
 
+// v4.4: signal-free timeout helper. We intentionally do NOT use
+// AbortController/AbortSignal here — in this dashboard's preview/sandbox
+// host, fetch calls get instrumented and their arguments passed through
+// postMessage for logging, and AbortSignal is not structured-cloneable.
+// That throws: "DataCloneError: Failed to execute 'postMessage' on
+// 'Window': AbortSignal object could not be cloned." Promise.race gives
+// the same practical result (the UI stops waiting and shows an error)
+// without ever constructing a signal object.
+function fetchWithTimeout(url, ms){
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if(settled) return;
+      settled = true;
+      reject(new Error('timeout'));
+    }, ms);
+    fetch(url).then(res => {
+      if(settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(res);
+    }).catch(err => {
+      if(settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 async function loadData(){
   document.getElementById('lastRefresh').textContent = 'Refreshing...';
   if(API_URL.indexOf('PASTE_YOUR') === 0){
@@ -887,14 +917,11 @@ async function loadData(){
     renderTip();
     return;
   }
-  // v4.4: hard timeout so a slow/stuck connection can never leave the
-  // dashboard stuck on "Refreshing..." forever — it now fails visibly
-  // after 20s instead of hanging indefinitely.
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
   try{
-    const res = await fetch(API_URL + '?t=' + Date.now(), { signal: controller.signal });
-    clearTimeout(timeoutId);
+    // v4.4: hard timeout so a slow/stuck connection can never leave the
+    // dashboard stuck on "Refreshing..." forever — it now fails visibly
+    // after 20s instead of hanging indefinitely.
+    const res = await fetchWithTimeout(API_URL + '?t=' + Date.now(), 20000);
     const data = await res.json();
     state = Object.assign(state, data);
 
@@ -930,8 +957,7 @@ async function loadData(){
 
     document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   }catch(e){
-    clearTimeout(timeoutId);
-    if(e && e.name === 'AbortError'){
+    if(e && e.message === 'timeout'){
       document.getElementById('lastRefresh').textContent = 'Timed out — tap Refresh to try again';
     } else {
       document.getElementById('lastRefresh').textContent = 'Offline — check connection';
