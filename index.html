@@ -874,6 +874,12 @@ function renderTip(){
 }
 function nextTip(){ tipIndex++; renderTip(); }
 
+// v4.4: render calls are isolated so one bad render never blocks the rest.
+function safeRender(fn, label){
+  try{ fn(); }
+  catch(e){ console.log('Render error in ' + label + ':', e); }
+}
+
 async function loadData(){
   document.getElementById('lastRefresh').textContent = 'Refreshing...';
   if(API_URL.indexOf('PASTE_YOUR') === 0){
@@ -881,22 +887,55 @@ async function loadData(){
     renderTip();
     return;
   }
+  // v4.4: hard timeout so a slow/stuck connection can never leave the
+  // dashboard stuck on "Refreshing..." forever — it now fails visibly
+  // after 20s instead of hanging indefinitely.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
   try{
-    const res = await fetch(API_URL + '?t=' + Date.now());
+    const res = await fetch(API_URL + '?t=' + Date.now(), { signal: controller.signal });
+    clearTimeout(timeoutId);
     const data = await res.json();
     state = Object.assign(state, data);
-    applySettings();
-    renderHome(); renderFollowUpsFull(); renderTracker();
-    renderSales(); renderExpenses(); renderDebtorsCreditors();
-    renderClients(); renderInventory(); renderPurchases(); renderReferrals();
-    renderCallsMessages(); renderArchive(); renderArchiveSales(); renderClientHealth();
-    renderTaxDropdown(); renderCatalogFormOptions(); renderCatalogTable();
-    renderCategoryChips(); renderUnitChips(); renderTargets();
-    renderCalendar(); renderAgenda();
-    renderTip();
+
+    // v4.4: each renderer runs in its own try/catch. Previously all of
+    // these sat inside one shared try/catch in loadData() — if any single
+    // one threw (e.g. malformed data in one sheet), every renderer after
+    // it in this list silently never ran, which is why some tabs looked
+    // "stuck" or blank even though the fetch itself succeeded.
+    safeRender(applySettings, 'applySettings');
+    safeRender(renderHome, 'renderHome');
+    safeRender(renderFollowUpsFull, 'renderFollowUpsFull');
+    safeRender(renderTracker, 'renderTracker');
+    safeRender(renderSales, 'renderSales');
+    safeRender(renderExpenses, 'renderExpenses');
+    safeRender(renderDebtorsCreditors, 'renderDebtorsCreditors');
+    safeRender(renderClients, 'renderClients');
+    safeRender(renderInventory, 'renderInventory');
+    safeRender(renderPurchases, 'renderPurchases');
+    safeRender(renderReferrals, 'renderReferrals');
+    safeRender(renderCallsMessages, 'renderCallsMessages');
+    safeRender(renderArchive, 'renderArchive');
+    safeRender(renderArchiveSales, 'renderArchiveSales');
+    safeRender(renderClientHealth, 'renderClientHealth');
+    safeRender(renderTaxDropdown, 'renderTaxDropdown');
+    safeRender(renderCatalogFormOptions, 'renderCatalogFormOptions');
+    safeRender(renderCatalogTable, 'renderCatalogTable');
+    safeRender(renderCategoryChips, 'renderCategoryChips');
+    safeRender(renderUnitChips, 'renderUnitChips');
+    safeRender(renderTargets, 'renderTargets');
+    safeRender(renderCalendar, 'renderCalendar');
+    safeRender(renderAgenda, 'renderAgenda');
+    safeRender(renderTip, 'renderTip');
+
     document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   }catch(e){
-    document.getElementById('lastRefresh').textContent = 'Offline — check connection';
+    clearTimeout(timeoutId);
+    if(e && e.name === 'AbortError'){
+      document.getElementById('lastRefresh').textContent = 'Timed out — tap Refresh to try again';
+    } else {
+      document.getElementById('lastRefresh').textContent = 'Offline — check connection';
+    }
     console.log('Load error', e);
   }
 }
