@@ -55,6 +55,13 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',
 .tab-content.active{display:block;animation:fade .2s ease;}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 
+.subtabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+.subtab{padding:7px 12px;border-radius:20px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;color:var(--ink-dim);border:1px solid var(--line);background:var(--card);font-family:'Space Grotesk',sans-serif;letter-spacing:0.2px;}
+.subtab.active{background:var(--teal);color:#fff;border-color:var(--teal);}
+.subtab:hover:not(.active){border-color:var(--teal);color:var(--teal);}
+.subtab-content{display:none;}
+.subtab-content.active{display:block;animation:fade .2s ease;}
+
 .vitals{display:flex;background:var(--ink);border-radius:12px;overflow-x:auto;margin-bottom:18px;}
 .vital{flex:1;min-width:150px;padding:16px 18px;position:relative;}
 .vital + .vital{border-left:1px dashed rgba(255,255,255,0.18);}
@@ -90,7 +97,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--teal);}
 label{display:block;font-size:10.5px;color:var(--ink-dim);letter-spacing:0.4px;text-transform:uppercase;margin:0 0 4px;font-weight:600;}
 .field{margin-bottom:10px;}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-@media(max-width:600px){.field-row{grid-template-columns:1fr;}}
+.field-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+@media(max-width:600px){.field-row{grid-template-columns:1fr;}.field-row3{grid-template-columns:1fr;}}
 
 .badge{display:inline-block;padding:3px 9px;border-radius:5px;font-size:10px;font-weight:600;letter-spacing:0.3px;}
 .badge.cleared{background:var(--teal-dim);color:var(--teal);}
@@ -176,6 +184,30 @@ details summary::-webkit-details-marker{display:none;}
 .chat-input-row{display:flex;gap:8px;}
 .chat-input-row input{flex:1;}
 .chat-input-row button{flex-shrink:0;width:auto;padding:9px 16px;}
+
+/* v4.0: calendar */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+.cal-dow{text-align:center;font-size:9.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-dim);padding-bottom:4px;}
+.cal-cell{background:var(--line-soft);border-radius:8px;min-height:64px;padding:6px;font-size:11px;cursor:pointer;border:2px solid transparent;position:relative;}
+.cal-cell.empty{background:none;cursor:default;}
+.cal-cell.today{border-color:var(--teal);}
+.cal-cell.selected{border-color:var(--blue);background:var(--blue-dim);}
+.cal-cell .cal-daynum{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;}
+.cal-dot-row{display:flex;gap:3px;margin-top:4px;flex-wrap:wrap;}
+.cal-dot{width:6px;height:6px;border-radius:50%;}
+.cal-dot.overdue{background:var(--coral);}
+.cal-dot.appt{background:var(--blue);}
+.cal-dot.due{background:var(--amber);}
+.cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.cal-nav button{width:auto;padding:6px 12px;}
+.cal-month-label{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;}
+.agenda-item{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-radius:8px;margin-bottom:6px;background:var(--line-soft);font-size:12.5px;}
+.agenda-item .agenda-del{width:auto;padding:3px 8px;font-size:10px;}
+
+/* v4.0: setup catalog */
+.catalog-row-actions{display:flex;gap:6px;align-items:center;}
+.chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.chip{background:var(--teal-dim);color:var(--teal);padding:5px 10px;border-radius:20px;font-size:11px;font-weight:600;}
 </style>
 </head>
 <body>
@@ -199,6 +231,7 @@ details summary::-webkit-details-marker{display:none;}
   <div class="tabs">
     <button class="tab active" onclick="switchTab('home',this)">Home</button>
     <button class="tab" onclick="switchTab('followups',this)">Follow-Ups</button>
+    <button class="tab" onclick="switchTab('calendar',this)">Calendar</button>
     <button class="tab" onclick="switchTab('tracker',this)">Tracker</button>
     <button class="tab" onclick="switchTab('clienthealth',this)">Client Pipeline</button>
     <button class="tab" onclick="switchTab('sales',this)">Daily Sales</button>
@@ -290,26 +323,115 @@ details summary::-webkit-details-marker{display:none;}
   <div class="tab-content" id="tab-followups">
     <div class="card">
       <div class="card-title">Follow-Up Calendar</div>
-      <div class="section-note">Every debtor/creditor payment due within 3 days (or overdue), any call with a next follow-up date, and any client whose reorder is overdue or dormant — one combined list, nothing needs to be entered twice.</div>
+      <div class="section-note">Every debtor/creditor payment due within 3 days (or overdue), any call with a next follow-up date, any client whose reorder is overdue or dormant, and any scheduled appointment within 3 days — one combined list, nothing needs to be entered twice. See the Calendar tab to browse by date and add new appointments.</div>
       <div id="followUpsFull"><div class="loading">Loading</div></div>
     </div>
   </div>
 
-  <!-- ============ TRACKER ============ -->
-  <div class="tab-content" id="tab-tracker">
+  <!-- ============ CALENDAR — v4.0 ============ -->
+  <div class="tab-content" id="tab-calendar">
     <div class="grid">
       <div class="card">
-        <div class="card-title">Revenue &amp; Profit — last 6 months</div>
-        <div id="trendChart"><div class="loading">Loading</div></div>
+        <div class="card-title">Calendar</div>
+        <div class="cal-nav">
+          <button class="refresh-btn ghost small" onclick="calShiftMonth(-1)">&larr; Prev</button>
+          <div class="cal-month-label" id="calMonthLabel">—</div>
+          <button class="refresh-btn ghost small" onclick="calShiftMonth(1)">Next &rarr;</button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+        <div class="section-note" style="margin-top:10px">
+          <span class="cal-dot overdue" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Overdue/due follow-up
+          &nbsp;&nbsp;<span class="cal-dot appt" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Appointment
+          &nbsp;&nbsp;<span class="cal-dot due" style="display:inline-block;vertical-align:middle;margin-right:4px"></span>Reorder check-in
+        </div>
       </div>
       <div class="card">
-        <div class="card-title">Top Clients by Revenue</div>
-        <div id="topClientsList"><div class="loading">Loading</div></div>
+        <div class="card-title">Add an Appointment / Follow-Up</div>
+        <div class="field"><label>Title</label><input type="text" id="apptTitle" placeholder="e.g. Site visit — Nkwatia Hospital"></div>
+        <div class="field-row">
+          <div class="field"><label>Client / Business</label><input type="text" id="apptClient"></div>
+          <div class="field"><label>Date</label><input type="date" id="apptDate"></div>
+        </div>
+        <div class="field"><label>Notes</label><input type="text" id="apptNotes"></div>
+        <button class="refresh-btn" style="width:100%" onclick="submitAppointment()">+ Add to Calendar</button>
+        <div id="apptResult" style="margin-top:6px;font-size:12px"></div>
+        <div class="card-title" style="margin-top:18px">Agenda — selected day: <span id="agendaDayLabel">today</span></div>
+        <div id="agendaList"><div class="empty">Pick a day on the calendar</div></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">Debtor Aging — how old is money owed to you</div>
-      <div id="agingChart"><div class="loading">Loading</div></div>
+  </div>
+
+  <!-- ============ TRACKER — v4.0 with sheet-matched sub-tabs ============ -->
+  <div class="tab-content" id="tab-tracker">
+    <div class="subtabs">
+      <button class="subtab active" onclick="switchSubtab('tracker','overview',this)">Overview</button>
+      <button class="subtab" onclick="switchSubtab('tracker','dailyTotals',this)">Daily Totals</button>
+      <button class="subtab" onclick="switchSubtab('tracker','weeklySales',this)">Weekly Sales</button>
+      <button class="subtab" onclick="switchSubtab('tracker','monthlyRpt',this)">Monthly Report</button>
+      <button class="subtab" onclick="switchSubtab('tracker','annualSummary',this)">Annual Summary</button>
+      <button class="subtab" onclick="switchSubtab('tracker','stockAnalysis',this)">Stock Analysis</button>
+      <button class="subtab" onclick="switchSubtab('tracker','profitDash',this)">Profit Dash</button>
+      <button class="subtab" onclick="switchSubtab('tracker','purchasesView',this)">Purchases</button>
+    </div>
+
+    <div class="subtab-content active" id="tracker-overview">
+      <div class="grid">
+        <div class="card">
+          <div class="card-title">Revenue &amp; Profit — last 6 months</div>
+          <div id="trendChart"><div class="loading">Loading</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Top Clients by Revenue</div>
+          <div id="topClientsList"><div class="loading">Loading</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Debtor Aging — how old is money owed to you</div>
+        <div id="agingChart"><div class="loading">Loading</div></div>
+      </div>
+    </div>
+
+    <div class="subtab-content" id="tracker-dailyTotals">
+      <div class="card">
+        <div class="card-title">Daily Totals — from your DAILY_TOTALS sheet</div>
+        <div class="scroll-table"><table><thead id="dailyTotalsHead"></thead><tbody id="dailyTotalsBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-weeklySales">
+      <div class="card">
+        <div class="card-title">Weekly Sales — from your WEEKLY_SALES sheet</div>
+        <div class="scroll-table"><table><thead id="weeklySalesHead"></thead><tbody id="weeklySalesBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-monthlyRpt">
+      <div class="card">
+        <div class="card-title">Monthly Report — from your MONTHLY_RPT sheet</div>
+        <div class="scroll-table"><table><thead id="monthlyRptHead"></thead><tbody id="monthlyRptBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-annualSummary">
+      <div class="card">
+        <div class="card-title">Annual Summary — from your ANNUAL_SUMMARY sheet</div>
+        <div class="scroll-table"><table><thead id="annualSummaryHead"></thead><tbody id="annualSummaryBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-stockAnalysis">
+      <div class="card">
+        <div class="card-title">Stock Analysis — from your STOCK_ANALYSIS sheet</div>
+        <div class="scroll-table"><table><thead id="stockAnalysisHead"></thead><tbody id="stockAnalysisBody"></tbody></table></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-profitDash">
+      <div class="card">
+        <div class="card-title">Profit Dashboard — from your PROFIT_DASH sheet</div>
+        <div id="profitDashBody"><div class="loading">Loading</div></div>
+      </div>
+    </div>
+    <div class="subtab-content" id="tracker-purchasesView">
+      <div class="card">
+        <div class="card-title">Purchases — from your PURCHASES sheet</div>
+        <div class="scroll-table"><table><thead id="purchasesViewHead"></thead><tbody id="purchasesViewBody"></tbody></table></div>
+      </div>
     </div>
   </div>
 
@@ -326,7 +448,7 @@ details summary::-webkit-details-marker{display:none;}
     </div>
   </div>
 
-  <!-- ============ DAILY SALES ============ -->
+  <!-- ============ DAILY SALES — v4.0 payment method + tax dropdown + notes ============ -->
   <div class="tab-content" id="tab-sales">
     <div class="grid">
       <div class="card">
@@ -340,10 +462,12 @@ details summary::-webkit-details-marker{display:none;}
           <div class="field"><label>Stock Code</label><input type="text" id="saleStockCode" placeholder="e.g. HB 1"></div>
           <div class="field"><label>Qty Sold</label><input type="number" id="saleQty" placeholder="e.g. 10"></div>
         </div>
-        <div class="field-row">
+        <div class="field-row3">
           <div class="field"><label>Discount % (optional)</label><input type="text" id="saleDiscount" placeholder="e.g. 5"></div>
-          <div class="field"><label>Tax % override (optional)</label><input type="text" id="saleTax" placeholder="leave blank to use default"></div>
+          <div class="field"><label>Tax Rate</label><select id="saleTax"><option value="">Use default</option></select></div>
+          <div class="field"><label>Payment Method</label><select id="salePaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option><option>Bank Transfer</option></select></div>
         </div>
+        <div class="field"><label>Notes</label><input type="text" id="saleNotes" placeholder="client name / invoice ref"></div>
         <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitSale()">+ Log Sale</button>
         <div id="saleResult" style="margin-top:8px;font-size:12px"></div>
       </div>
@@ -355,7 +479,7 @@ details summary::-webkit-details-marker{display:none;}
     </div>
     <div class="card">
       <div class="card-title">Recent Entries</div>
-      <div class="scroll-table"><table><thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Gross Profit</th></tr></thead><tbody id="salesTableBody"></tbody></table></div>
+      <div class="scroll-table"><table><thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Gross Profit</th><th>Payment</th></tr></thead><tbody id="salesTableBody"></tbody></table></div>
     </div>
   </div>
 
@@ -399,7 +523,7 @@ details summary::-webkit-details-marker{display:none;}
               <div class="field"><label>Invoice Date</label><input type="date" id="debtorInvoiceDate"></div>
               <div class="field"><label>Due Date</label><input type="date" id="debtorDueDate"></div>
             </div>
-            <div class="field"><label>Payment Method</label><select id="debtorPaymentMethod"><option value="">—</option><option>Cash</option><option>Cheque</option></select></div>
+            <div class="field"><label>Payment Method</label><select id="debtorPaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option></select></div>
             <div class="field"><label>Notes</label><input type="text" id="debtorNotes"></div>
             <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('debtor')">+ Add Debtor</button>
             <div id="debtorResult" style="margin-top:6px;font-size:12px"></div>
@@ -424,7 +548,7 @@ details summary::-webkit-details-marker{display:none;}
               <div class="field"><label>Invoice Date</label><input type="date" id="creditorInvoiceDate"></div>
               <div class="field"><label>Due Date</label><input type="date" id="creditorDueDate"></div>
             </div>
-            <div class="field"><label>Payment Method</label><select id="creditorPaymentMethod"><option value="">—</option><option>Cash</option><option>Cheque</option></select></div>
+            <div class="field"><label>Payment Method</label><select id="creditorPaymentMethod"><option value="">—</option><option>Cash</option><option>MoMo</option><option>Cheque</option></select></div>
             <div class="field"><label>Notes</label><input type="text" id="creditorNotes"></div>
             <button class="refresh-btn" style="width:100%" onclick="submitDebtorCreditor('creditor')">+ Add Creditor</button>
             <div id="creditorResult" style="margin-top:6px;font-size:12px"></div>
@@ -469,7 +593,7 @@ details summary::-webkit-details-marker{display:none;}
         <button class="refresh-btn" style="width:100%;margin-top:6px" onclick="submitGenericAdd('purchases','addPurchase')">+ Log Purchase</button>
         <div id="purchasesResult" style="margin-top:8px;font-size:12px"></div>
       </div>
-      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your PURCHASES sheet headers automatically — this is where supplier price changes (e.g. from dollar fluctuations) get logged going forward without touching past sales.</div></div>
+      <div class="card"><div class="card-title">About this tab</div><div class="section-note">Form fields are generated from your PURCHASES sheet headers automatically — this is where supplier price changes (e.g. from dollar fluctuations) get logged going forward without touching past sales. To update a product's cost so future sales use the new price (while past sales keep the old one), use Setup → Product Catalog → Update Cost.</div></div>
     </div>
     <div class="card"><div class="card-title">Recent Purchases</div><div class="scroll-table"><table><thead id="purchasesTableHead"></thead><tbody id="purchasesTableBody"></tbody></table></div></div>
   </div>
@@ -556,7 +680,7 @@ details summary::-webkit-details-marker{display:none;}
     </div>
   </div>
 
-  <!-- ============ SETUP ============ -->
+  <!-- ============ SETUP — v4.0 catalog / categories / units / targets ============ -->
   <div class="tab-content" id="tab-setup">
     <div class="card">
       <div class="card-title">Business Identity</div>
@@ -567,13 +691,78 @@ details summary::-webkit-details-marker{display:none;}
       </div>
       <label>Theme</label>
       <div class="swatch-row" id="themeSwatches"></div>
-      <div class="field-row" style="margin-top:14px">
-        <div class="field"><label>Monthly Revenue Target (GHS)</label><input type="number" id="setupMonthlyTarget"></div>
-        <div class="field"><label>Working Days / Month</label><input type="number" id="setupWorkingDays"></div>
-      </div>
-      <button class="refresh-btn" onclick="saveSetup()">Save Settings</button>
+      <button class="refresh-btn" style="margin-top:14px" onclick="saveSetup()">Save Settings</button>
       <div id="setupResult" style="margin-top:8px;font-size:12px"></div>
     </div>
+
+    <div class="card">
+      <div class="card-title">Revenue Targets &amp; Expense Budgets</div>
+      <div class="section-note">Mirrors the 50/30/20 targets in SETUP Section 2 of your sheet — set here and the Home / Tracker pace numbers use them immediately.</div>
+      <div class="field-row3">
+        <div class="field"><label>Daily Revenue Target (GHS)</label><input type="number" id="targetDaily"></div>
+        <div class="field"><label>Weekly Revenue Target (GHS)</label><input type="number" id="targetWeekly"></div>
+        <div class="field"><label>Monthly Revenue Target (GHS)</label><input type="number" id="targetMonthly"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Annual Revenue Target (GHS)</label><input type="number" id="targetAnnual"></div>
+        <div class="field"><label>Working Days / Month</label><input type="number" id="setupWorkingDays"></div>
+      </div>
+      <div class="field-row3">
+        <div class="field"><label>Daily Expense Budget (GHS)</label><input type="number" id="budgetDaily"></div>
+        <div class="field"><label>Weekly Expense Budget (GHS)</label><input type="number" id="budgetWeekly"></div>
+        <div class="field"><label>Monthly Expense Budget (GHS)</label><input type="number" id="budgetMonthly"></div>
+      </div>
+      <div class="field"><label>Annual Expense Budget (GHS)</label><input type="number" id="budgetAnnual"></div>
+      <button class="refresh-btn" onclick="saveTargets()">Save Targets &amp; Budgets</button>
+      <div id="targetsResult" style="margin-top:8px;font-size:12px"></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Product Catalog — add a new product</div>
+        <div class="section-note">Adds a row to SETUP Section 3, same fields the sheet itself uses. Stock Code must be unique and is used across every other sheet.</div>
+        <div class="field-row">
+          <div class="field"><label>Stock Code</label><input type="text" id="catStockCode" placeholder="e.g. HB 2"></div>
+          <div class="field"><label>Product Name</label><input type="text" id="catName"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Category</label><select id="catCategory"></select></div>
+          <div class="field"><label>Unit</label><select id="catUnit"></select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Reorder Level</label><input type="number" id="catReorder"></div>
+          <div class="field"><label>Supplier</label><input type="text" id="catSupplier"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Unit Cost (GHS)</label><input type="number" id="catUnitCost"></div>
+          <div class="field"><label>Retail Price (GHS)</label><input type="number" id="catRetailPrice"></div>
+        </div>
+        <div class="field"><label>Track Expiry?</label><select id="catTrackExpiry"><option value="">—</option><option>Yes</option><option>No</option></select></div>
+        <button class="refresh-btn" style="width:100%" onclick="submitCatalogProduct()">+ Add Product</button>
+        <div id="catalogResult" style="margin-top:8px;font-size:12px"></div>
+
+        <div class="card-title" style="margin-top:18px">Categories</div>
+        <div class="field-row">
+          <div class="field" style="flex:1"><input type="text" id="newCategoryInput" placeholder="Add a new category"></div>
+          <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="submitNewCategory()">+ Add</button></div>
+        </div>
+        <div class="chip-list" id="categoryChips"></div>
+
+        <div class="card-title" style="margin-top:18px">Units</div>
+        <div class="field-row">
+          <div class="field" style="flex:1"><input type="text" id="newUnitInput" placeholder="Add a new unit (e.g. Sachet)"></div>
+          <div class="field"><button class="refresh-btn ghost" style="width:100%" onclick="submitNewUnit()">+ Add</button></div>
+        </div>
+        <div class="chip-list" id="unitChips"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Product Catalog — cost tracking</div>
+        <div class="section-note">Supplier price changed (e.g. dollar rate)? Update the cost here — the dashboard automatically moves the current Unit Cost into Previous Unit Cost and stamps today's date into Price Changed Date, exactly like the manual process in your SETUP note. Past sales keep their own recorded cost automatically.</div>
+        <div class="scroll-table"><table><thead><tr><th>Code</th><th>Product</th><th>Unit Cost</th><th>Previous</th><th>Changed</th><th></th></tr></thead><tbody id="catalogTableBody"></tbody></table></div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">AI Assistant Setup (one-time)</div>
       <div class="section-note">
@@ -602,10 +791,6 @@ const THEMES = [
   { name:'Slate Trust',    primary:'#3d5a6c', secondary:'#0d6e63', alert:'#b3402f' }
 ];
 
-// Daily tips distilled from all 4 BYINFORGH guides — WhatsApp Business
-// Operating System, Sales Playbook, Customer Service Guide, and the
-// Referral & Retention System — adapted for a hospital/medical-supplies
-// business like CORAZON.
 const TIPS = [
   { text: "Give value before you ask for anything. When you message a hospital about a re-order, lead with something useful — a stock tip, a delivery update — before mentioning price.", source: "Sales Playbook — The One Rule" },
   { text: "Sort every contact into Cold, Warm, or Re-engage before messaging. A warm contact (spoken before) should never get a cold-opener question.", source: "Sales Playbook — Sort Your Contacts" },
@@ -616,7 +801,7 @@ const TIPS = [
   { text: "48 hours after any delivery, send a quick satisfaction check. It catches problems early and opens the golden window for a referral ask.", source: "Referral & Retention System" },
   { text: "A customer who bought once is 60–70% more likely to buy again vs a 5–20% chance with someone new. Retention is cheaper than acquisition — check in on quiet clients before chasing new ones.", source: "Referral & Retention System" },
   { text: "Label every client by loyalty tier: One-Time, Repeat, Loyal, Spotlight. Your Spotlight clients deserve priority service and first access to new stock.", source: "Referral & Retention System" },
-  { text: "\"I will think about it\" is usually genuine, not a no. Re-enter in 5–7 days with something new rather than repeating your last message.", source: "Sales Playbook — Objection Handling" },
+  { text: "\\"I will think about it\\" is usually genuine, not a no. Re-enter in 5–7 days with something new rather than repeating your last message.", source: "Sales Playbook — Objection Handling" },
   { text: "Voice notes feel more personal than long text in Ghana. Use one for a warm re-engagement to a hospital contact who's gone quiet.", source: "Sales Playbook — The 8 Behaviour Rules" },
   { text: "Never re-open a cold conversation just to ask for a referral or repeat an old offer. Bring a new angle — a result, a fact, a season, or a genuine check-in.", source: "Sales Playbook / Referral System" },
   { text: "Reply to a new enquiry within 30 minutes during business hours where you can. The first response is the most important one — interest fades fast.", source: "WhatsApp Business OS — Chapter 11" },
@@ -624,7 +809,7 @@ const TIPS = [
   { text: "Set up your WhatsApp Away Message so no enquiry from a clinic or hospital ever sits unanswered overnight.", source: "WhatsApp Business OS — Chapter 10" },
   { text: "Acknowledge a referral's success immediately — thank the referrer the moment their contact buys. Delayed thanks feels like an afterthought.", source: "Referral & Retention System" },
   { text: "Update your product catalogue regularly. A stale catalogue costs enquiries — every update is also a reason to message your customer list.", source: "WhatsApp Business OS — Chapter 3" },
-  { text: "When a client goes quiet for 30–60 days, re-enter with something specific: a new product that made you think of them, not a generic \"checking in\".", source: "WhatsApp Business OS — Chapter 12" },
+  { text: "When a client goes quiet for 30–60 days, re-enter with something specific: a new product that made you think of them, not a generic \\"checking in\\".", source: "WhatsApp Business OS — Chapter 12" },
   { text: "Name their specific need when reaching out — a generic message reads like a template. Specificity signals you're paying attention.", source: "Sales Playbook — The 8 Behaviour Rules" },
   { text: "One sale a day, compounded, adds up fast. Consistency beats intensity — show up in the dashboard every day rather than in bursts.", source: "WhatsApp Business OS — The Operating System" },
   { text: "Your phone goes down the moment a customer walks in or calls. A customer who feels ignored for even a few seconds decides how the rest of the relationship will feel.", source: "Customer Service Guide — Your Presence" },
@@ -639,9 +824,11 @@ const TIPS = [
   { text: "When negotiating price, don't reduce the number — offer a smaller entry point instead. 'Let's start with the smaller order so you can see the value first' protects your price and still moves things forward.", source: "Sales Playbook — The Price Conversation" }
 ];
 
-let state = { settings:{}, dailySales:{rows:[]}, debtorsCreditors:{}, expenses:{rows:[]}, clients:{rows:[]}, inventory:{rows:[]}, purchases:{rows:[]}, referrals:{rows:[]}, revenue:{}, followUps:{items:[]}, tracker:{}, callsMessages:{calls:[],messages:[]}, archive:{rows:[]}, archiveSales:{rows:[]}, clientHealth:{rows:[],counts:{}} };
+let state = { settings:{}, dailySales:{rows:[]}, debtorsCreditors:{}, expenses:{rows:[]}, clients:{rows:[]}, inventory:{rows:[]}, purchases:{rows:[]}, referrals:{rows:[]}, revenue:{}, followUps:{items:[]}, tracker:{}, callsMessages:{calls:[],messages:[]}, archive:{rows:[]}, archiveSales:{rows:[]}, clientHealth:{rows:[],counts:{}}, taxCodes:[], setupCatalog:{headers:[],rows:[]}, setupCategories:[], units:[], appointments:[], profitDash:{rows:[]}, dailyTotals:{headers:[],rows:[]}, weeklySales:{headers:[],rows:[]}, monthlyRpt:{headers:[],rows:[]}, annualSummary:{headers:[],rows:[]}, stockAnalysis:{headers:[],rows:[]} };
 let tipIndex = (function(){ const d = new Date(); const dayOfYear = Math.floor((d - new Date(d.getFullYear(),0,0))/86400000); return dayOfYear % TIPS.length; })();
 let chatHistory = [];
+let calViewDate = new Date();
+let calSelectedDate = new Date();
 
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
 function switchTab(name, btn){
@@ -649,6 +836,14 @@ function switchTab(name, btn){
   document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
+  if(name==='calendar'){ renderCalendar(); renderAgenda(); }
+}
+function switchSubtab(group, name, btn){
+  const container = btn.closest('.tab-content');
+  container.querySelectorAll('.subtab').forEach(t=>t.classList.remove('active'));
+  container.querySelectorAll('.subtab-content').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(group+'-'+name).classList.add('active');
 }
 function fmtMoney(v){ v = parseFloat(v)||0; return 'GHS ' + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtMoneyShort(v){ v = parseFloat(v)||0; return 'GHS ' + Math.round(v).toLocaleString(); }
@@ -676,6 +871,9 @@ async function loadData(){
     renderSales(); renderExpenses(); renderDebtorsCreditors();
     renderClients(); renderInventory(); renderPurchases(); renderReferrals();
     renderCallsMessages(); renderArchive(); renderArchiveSales(); renderClientHealth();
+    renderTaxDropdown(); renderCatalogFormOptions(); renderCatalogTable();
+    renderCategoryChips(); renderUnitChips(); renderTargets();
+    renderCalendar(); renderAgenda();
     renderTip();
     document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   }catch(e){
@@ -703,8 +901,6 @@ function applySettings(){
   }
   document.getElementById('setupBusinessName').value = s.business_name || '';
   document.getElementById('setupIndustry').value = s.industry || '';
-  document.getElementById('setupMonthlyTarget').value = s.monthly_target || '0';
-  document.getElementById('setupWorkingDays').value = s.working_days || '26';
   renderThemeSwatches(s.primary_color);
 }
 function renderThemeSwatches(current){
@@ -751,7 +947,7 @@ function renderHome(){
   const monthlyActual = rev.monthlyActual || 0;
   const pct = monthlyTarget > 0 ? Math.min(150, (monthlyActual/monthlyTarget)*100) : 0;
   if(monthlyTarget <= 0){
-    document.getElementById('revenueBlock').innerHTML = `<div class="section-note">No monthly target set yet. Go to Setup to add one and this bar will track your pace automatically.</div>`;
+    document.getElementById('revenueBlock').innerHTML = `<div class="section-note">No monthly target set yet. Go to Setup → Revenue Targets &amp; Expense Budgets to add one and this bar will track your pace automatically.</div>`;
   } else {
     document.getElementById('revenueBlock').innerHTML = `
       <div class="summary-row" style="margin-bottom:6px">
@@ -873,7 +1069,92 @@ function renderFollowUpsFull(){
   document.getElementById('followUpsFull').innerHTML = block('Overdue', overdue) + block('Due Today', today) + block('Due Soon', soon) + block('No Date Set', none);
 }
 
-// ---------- TRACKER ----------
+// ---------- CALENDAR — v4.0 ----------
+function ddmmyyyyToDate(s){
+  if(!s) return null;
+  const parts = s.toString().split('/');
+  if(parts.length!==3) return null;
+  const d = new Date(parseInt(parts[2],10), parseInt(parts[1],10)-1, parseInt(parts[0],10));
+  return isNaN(d.getTime()) ? null : d;
+}
+function sameDay(a,b){ return a && b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+function calShiftMonth(delta){ calViewDate = new Date(calViewDate.getFullYear(), calViewDate.getMonth()+delta, 1); renderCalendar(); }
+function calDayItems(day){
+  const items = [];
+  (state.followUps && state.followUps.items || []).forEach(i=>{
+    const d = ddmmyyyyToDate(i.dueDate);
+    if(d && sameDay(d, day)) items.push({type: i.daysUntil!==null && i.daysUntil<0 ? 'overdue':'due', label: (i.name||'—')+' — '+i.kind});
+  });
+  (state.appointments || []).forEach(a=>{
+    const d = ddmmyyyyToDate(a.date);
+    if(d && sameDay(d, day)) items.push({type:'appt', label: a.title + (a.client?' — '+a.client:''), row:a.row});
+  });
+  return items;
+}
+function renderCalendar(){
+  const y = calViewDate.getFullYear(), m = calViewDate.getMonth();
+  document.getElementById('calMonthLabel').textContent = calViewDate.toLocaleDateString('en-GB',{month:'long', year:'numeric'});
+  const firstOfMonth = new Date(y,m,1);
+  const startOffset = firstOfMonth.getDay();
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const todayD = new Date(); todayD.setHours(0,0,0,0);
+  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('');
+  for(let i=0;i<startOffset;i++) html += '<div class="cal-cell empty"></div>';
+  for(let day=1; day<=daysInMonth; day++){
+    const dObj = new Date(y,m,day);
+    const items = calDayItems(dObj);
+    const isToday = sameDay(dObj, todayD);
+    const isSelected = sameDay(dObj, calSelectedDate);
+    const dots = items.slice(0,6).map(it=>`<span class="cal-dot ${it.type}"></span>`).join('');
+    html += `<div class="cal-cell ${isToday?'today':''} ${isSelected?'selected':''}" onclick="calSelectDay(${y},${m},${day})">
+      <div class="cal-daynum">${day}</div>
+      <div class="cal-dot-row">${dots}</div>
+    </div>`;
+  }
+  document.getElementById('calGrid').innerHTML = html;
+}
+function calSelectDay(y,m,day){
+  calSelectedDate = new Date(y,m,day);
+  renderCalendar();
+  renderAgenda();
+}
+function renderAgenda(){
+  const items = calDayItems(calSelectedDate);
+  const todayD = new Date(); todayD.setHours(0,0,0,0);
+  document.getElementById('agendaDayLabel').textContent = sameDay(calSelectedDate, todayD) ? 'today, '+calSelectedDate.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : calSelectedDate.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+  if(!document.getElementById('apptDate').value){
+    document.getElementById('apptDate').valueAsDate = calSelectedDate;
+  }
+  document.getElementById('agendaList').innerHTML = items.length ? items.map(it=>`
+    <div class="agenda-item">
+      <span>${it.label}</span>
+      ${it.type==='appt' ? `<button class="refresh-btn ghost agenda-del" onclick="removeAppointment(${it.row})">Remove</button>` : ''}
+    </div>`).join('') : '<div class="empty">Nothing scheduled this day</div>';
+}
+async function submitAppointment(){
+  const title = document.getElementById('apptTitle').value.trim();
+  if(!title){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">Title is required.</span>'; return; }
+  const dateVal = document.getElementById('apptDate').value;
+  const params = { title: title, client: document.getElementById('apptClient').value.trim(),
+    date: dateVal ? dateVal.split('-').reverse().join('/') : '', notes: document.getElementById('apptNotes').value.trim() };
+  document.getElementById('apptResult').innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=logAppointment&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Appointment added'); ['apptTitle','apptClient','apptNotes'].forEach(id=>document.getElementById(id).value=''); loadData(); }
+    else document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function removeAppointment(row){
+  try{
+    await fetch(API_URL + '?action=deleteAppointment&row=' + row + '&t=' + Date.now());
+    showToast('Appointment removed');
+    loadData();
+  }catch(e){ showToast('Connection error'); }
+}
+
+// ---------- TRACKER (v4.0 with generic sheet-mirrored sub-tabs) ----------
 function renderTracker(){
   const t = state.tracker || {};
   const trend = t.monthlyTrend || [];
@@ -905,6 +1186,27 @@ function renderTracker(){
     agingRow('31–60d', aging.d31_60, 'warn') +
     agingRow('61–90d', aging.d61_90, 'warn') +
     agingRow('90d+', aging.d90plus, 'danger');
+
+  renderSheetMirrorTable('dailyTotals','dailyTotalsHead','dailyTotalsBody');
+  renderSheetMirrorTable('weeklySales','weeklySalesHead','weeklySalesBody');
+  renderSheetMirrorTable('monthlyRpt','monthlyRptHead','monthlyRptBody');
+  renderSheetMirrorTable('annualSummary','annualSummaryHead','annualSummaryBody');
+  renderSheetMirrorTable('stockAnalysis','stockAnalysisHead','stockAnalysisBody');
+  renderSheetMirrorTable('purchases','purchasesViewHead','purchasesViewBody');
+
+  const pd = state.profitDash || { rows: [] };
+  document.getElementById('profitDashBody').innerHTML = pd.rows && pd.rows.length ? pd.rows.map(r=>
+    r.isSection
+      ? `<div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;color:var(--teal);margin:12px 0 4px">${r.label}</div>`
+      : `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px"><span>${r.label}</span><span class="mono">${r.value}</span></div>`
+  ).join('') : '<div class="empty">PROFIT_DASH sheet not found or empty</div>';
+}
+function renderSheetMirrorTable(stateKey, headEl, bodyEl){
+  const t = state[stateKey] || { headers: [], rows: [] };
+  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(0,400).map(r=>
+    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+  ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No data found on this sheet yet</td></tr>`;
 }
 
 // ---------- CLIENT HEALTH (reorder pipeline) ----------
@@ -924,7 +1226,16 @@ function renderClientHealth(){
   ).join('') : '<tr><td colspan="5" class="empty">No client order history yet</td></tr>';
 }
 
-// ---------- DAILY SALES ----------
+// ---------- DAILY SALES — v4.0 tax dropdown + payment method + notes ----------
+function renderTaxDropdown(){
+  const sel = document.getElementById('saleTax');
+  const codes = (state.taxCodes || []).filter(c=>c.active);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Use default</option>' + codes.map(c=>
+    `<option value="${c.rate}">${c.code} (${c.rate}%)${c.description?' — '+c.description:''}</option>`
+  ).join('');
+  if(current) sel.value = current;
+}
 function renderSales(){
   const ds = state.dailySales || {};
   document.getElementById('salesSummaryChips').innerHTML = `
@@ -935,8 +1246,8 @@ function renderSales(){
   `;
   const rows = ds.rows || [];
   document.getElementById('salesTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.date||''}</td><td>${r.customer||''}</td><td>${r.product||''}</td><td>${r.qty||''}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td></tr>`
-  ).join('') : '<tr><td colspan="6" class="empty">No sales yet</td></tr>';
+    `<tr><td>${r.date||''}</td><td>${r.customer||''}</td><td>${r.product||''}</td><td>${r.qty||''}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td><td>${r.paymentMethod||''}</td></tr>`
+  ).join('') : '<tr><td colspan="7" class="empty">No sales yet</td></tr>';
   if(!document.getElementById('saleDate').value) document.getElementById('saleDate').valueAsDate = new Date();
 }
 async function submitSale(){
@@ -946,19 +1257,23 @@ async function submitSale(){
   const stockCode = document.getElementById('saleStockCode').value.trim();
   const qty = document.getElementById('saleQty').value;
   const discount = document.getElementById('saleDiscount').value.trim();
-  const tax = document.getElementById('saleTax').value.trim();
+  const tax = document.getElementById('saleTax').value;
+  const paymentMethod = document.getElementById('salePaymentMethod').value;
+  const notes = document.getElementById('saleNotes').value.trim();
   const resultEl = document.getElementById('saleResult');
   if(!stockCode || !qty){ resultEl.innerHTML = '<span style="color:var(--coral)">Stock code and quantity are required.</span>'; return; }
   resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
   try{
     const url = API_URL + '?action=addSale&date=' + encodeURIComponent(ddmmyyyy) + '&customer=' + encodeURIComponent(customer)
       + '&stockCode=' + encodeURIComponent(stockCode) + '&qty=' + encodeURIComponent(qty)
-      + '&discountPct=' + encodeURIComponent(discount) + '&taxPct=' + encodeURIComponent(tax) + '&t=' + Date.now();
+      + '&discountPct=' + encodeURIComponent(discount) + '&taxPct=' + encodeURIComponent(tax)
+      + '&paymentMethod=' + encodeURIComponent(paymentMethod) + '&notes=' + encodeURIComponent(notes) + '&t=' + Date.now();
     const res = await fetch(url); const data = await res.json();
     if(data.success){
       resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved — row ' + data.row + '</span>';
       showToast('Sale logged');
-      ['saleCustomer','saleStockCode','saleQty','saleDiscount','saleTax'].forEach(id=>document.getElementById(id).value='');
+      ['saleCustomer','saleStockCode','saleQty','saleDiscount','saleNotes'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('saleTax').value=''; document.getElementById('salePaymentMethod').value='';
       loadData();
     } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
@@ -1170,7 +1485,7 @@ async function restoreArchived(row){
   }catch(e){ showToast('Connection error'); }
 }
 
-// ---------- ARCHIVE (Sales) — v3.0 ----------
+// ---------- ARCHIVE (Sales) ----------
 function renderArchiveSales(){
   const arch = state.archiveSales || { rows: [] };
   document.getElementById('archiveSalesCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
@@ -1200,7 +1515,7 @@ async function restoreArchivedSale(row){
   }catch(e){ showToast('Connection error'); }
 }
 
-// ---------- AI ASSISTANT — v3.0 ----------
+// ---------- AI ASSISTANT ----------
 function buildDashboardContext(){
   const rev = state.revenue || {};
   const fu = state.followUps || { items: [] };
@@ -1212,7 +1527,7 @@ function buildDashboardContext(){
     `Client reorder pipeline: ${health.counts && health.counts.active||0} active, ${health.counts && health.counts.due||0} due, ${health.counts && health.counts.overdue||0} overdue, ${health.counts && health.counts.dormant||0} dormant.`,
     `Owed to business: GHS ${Math.round((dc.debtors && dc.debtors.summary && dc.debtors.summary.totalBalance)||0)}. Business owes: GHS ${Math.round((dc.creditors && dc.creditors.summary && dc.creditors.summary.totalBalance)||0)}.`,
     overdueFu ? `Overdue follow-ups: ${overdueFu}` : 'No overdue follow-ups right now.'
-  ].join('\n');
+  ].join('\\n');
 }
 function renderChatLog(){
   const log = document.getElementById('chatLog');
@@ -1249,7 +1564,7 @@ async function sendChat(){
   renderChatLog();
 }
 
-// ---------- SETUP ----------
+// ---------- SETUP: identity + theme ----------
 async function saveSetup(){
   const resultEl = document.getElementById('setupResult');
   resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
@@ -1257,8 +1572,6 @@ async function saveSetup(){
   const params = {
     business_name: document.getElementById('setupBusinessName').value.trim(),
     industry: document.getElementById('setupIndustry').value.trim(),
-    monthly_target: document.getElementById('setupMonthlyTarget').value,
-    working_days: document.getElementById('setupWorkingDays').value,
     primary_color: s.primary_color || '#0d6e63',
     secondary_color: s.secondary_color || '#2f6fa3',
     alert_color: s.alert_color || '#b3402f'
@@ -1275,6 +1588,143 @@ async function saveSetup(){
       loadData();
     } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+// ---------- SETUP: v4.0 revenue targets & expense budgets ----------
+function renderTargets(){
+  const s = state.settings || {};
+  document.getElementById('targetDaily').value = s.daily_revenue_target || '0';
+  document.getElementById('targetWeekly').value = s.weekly_revenue_target || '0';
+  document.getElementById('targetMonthly').value = s.monthly_target || '0';
+  document.getElementById('targetAnnual').value = s.annual_revenue_target || '0';
+  document.getElementById('setupWorkingDays').value = s.working_days || '26';
+  document.getElementById('budgetDaily').value = s.daily_expense_budget || '0';
+  document.getElementById('budgetWeekly').value = s.weekly_expense_budget || '0';
+  document.getElementById('budgetMonthly').value = s.monthly_expense_budget || '0';
+  document.getElementById('budgetAnnual').value = s.annual_expense_budget || '0';
+}
+async function saveTargets(){
+  const resultEl = document.getElementById('targetsResult');
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  const params = {
+    daily_revenue_target: document.getElementById('targetDaily').value || '0',
+    weekly_revenue_target: document.getElementById('targetWeekly').value || '0',
+    monthly_target: document.getElementById('targetMonthly').value || '0',
+    annual_revenue_target: document.getElementById('targetAnnual').value || '0',
+    working_days: document.getElementById('setupWorkingDays').value || '26',
+    daily_expense_budget: document.getElementById('budgetDaily').value || '0',
+    weekly_expense_budget: document.getElementById('budgetWeekly').value || '0',
+    monthly_expense_budget: document.getElementById('budgetMonthly').value || '0',
+    annual_expense_budget: document.getElementById('budgetAnnual').value || '0'
+  };
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=saveSettings&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
+      showToast('Targets saved');
+      state.settings = data.settings;
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
+// ---------- SETUP: v4.0 product catalog / categories / units ----------
+function renderCatalogFormOptions(){
+  const catSel = document.getElementById('catCategory');
+  const cats = state.setupCategories || [];
+  catSel.innerHTML = '<option value="">—</option>' + cats.map(c=>`<option>${c}</option>`).join('');
+  const unitSel = document.getElementById('catUnit');
+  const units = state.units || [];
+  unitSel.innerHTML = '<option value="">—</option>' + units.map(u=>`<option>${u}</option>`).join('');
+}
+function renderCategoryChips(){
+  const cats = state.setupCategories || [];
+  document.getElementById('categoryChips').innerHTML = cats.length ? cats.map(c=>`<span class="chip">${c}</span>`).join('') : '<span class="section-note">No categories found yet</span>';
+}
+function renderUnitChips(){
+  const units = state.units || [];
+  document.getElementById('unitChips').innerHTML = units.length ? units.map(u=>`<span class="chip">${u}</span>`).join('') : '<span class="section-note">No units yet</span>';
+}
+function renderCatalogTable(){
+  const catalog = state.setupCatalog || { rows: [] };
+  const rows = catalog.rows || [];
+  document.getElementById('catalogTableBody').innerHTML = rows.length ? rows.map(r=>`
+    <tr>
+      <td>${r.stockCode||''}</td>
+      <td>${r.name||''}</td>
+      <td class="mono">${r.unitCost||''}</td>
+      <td class="mono">${r.previousUnitCost||''}</td>
+      <td>${r.priceChangedDate||''}</td>
+      <td>
+        <div class="catalog-row-actions">
+          <input type="number" placeholder="New cost" style="width:90px" id="newcost_${r.sheetRow}">
+          <button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="submitCostUpdate(${r.sheetRow})">Update</button>
+        </div>
+      </td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">No products found in SETUP catalog yet</td></tr>';
+}
+async function submitCatalogProduct(){
+  const name = document.getElementById('catName').value.trim();
+  const resultEl = document.getElementById('catalogResult');
+  if(!name){ resultEl.innerHTML = '<span style="color:var(--coral)">Product Name is required.</span>'; return; }
+  const params = {
+    stockCode: document.getElementById('catStockCode').value.trim(),
+    name: name,
+    category: document.getElementById('catCategory').value,
+    unit: document.getElementById('catUnit').value,
+    reorderLevel: document.getElementById('catReorder').value,
+    supplier: document.getElementById('catSupplier').value.trim(),
+    unitCost: document.getElementById('catUnitCost').value,
+    retailPrice: document.getElementById('catRetailPrice').value,
+    trackExpiry: document.getElementById('catTrackExpiry').value
+  };
+  resultEl.innerHTML = '<span style="color:var(--ink-dim)">Saving...</span>';
+  try{
+    const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+    const res = await fetch(API_URL + '?action=addSetupProduct&' + qs + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){
+      resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Product added</span>';
+      showToast('Product added to catalog');
+      ['catStockCode','catName','catReorder','catSupplier','catUnitCost','catRetailPrice'].forEach(id=>document.getElementById(id).value='');
+      loadData();
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+  }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+async function submitCostUpdate(sheetRow){
+  const input = document.getElementById('newcost_'+sheetRow);
+  const newCost = input.value;
+  if(!newCost){ showToast('Enter a new cost first'); return; }
+  try{
+    const res = await fetch(API_URL + '?action=updateSetupCost&sheetRow=' + sheetRow + '&newUnitCost=' + encodeURIComponent(newCost) + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ showToast('Cost updated — previous cost saved'); loadData(); }
+    else showToast(data.error || 'Could not update');
+  }catch(e){ showToast('Connection error'); }
+}
+async function submitNewCategory(){
+  const input = document.getElementById('newCategoryInput');
+  const val = input.value.trim();
+  if(!val) return;
+  try{
+    const res = await fetch(API_URL + '?action=addSetupCategory&category=' + encodeURIComponent(val) + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ input.value=''; showToast('Category added'); loadData(); }
+    else showToast(data.error || 'Could not add category');
+  }catch(e){ showToast('Connection error'); }
+}
+async function submitNewUnit(){
+  const input = document.getElementById('newUnitInput');
+  const val = input.value.trim();
+  if(!val) return;
+  try{
+    const res = await fetch(API_URL + '?action=addUnit&unit=' + encodeURIComponent(val) + '&t=' + Date.now());
+    const data = await res.json();
+    if(data.success){ input.value=''; showToast('Unit added'); loadData(); }
+    else showToast(data.error || 'Could not add unit');
+  }catch(e){ showToast('Connection error'); }
 }
 
 renderTip();
