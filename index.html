@@ -208,6 +208,11 @@ details summary::-webkit-details-marker{display:none;}
 .catalog-row-actions{display:flex;gap:6px;align-items:center;}
 .chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .chip{background:var(--teal-dim);color:var(--teal);padding:5px 10px;border-radius:20px;font-size:11px;font-weight:600;}
+
+/* v4.1: footer branding */
+.byif-footer{text-align:center;padding:16px 0 4px;font-size:10.5px;color:var(--ink-dim);opacity:0.7;}
+.byif-footer a{color:inherit;text-decoration:none;}
+.byif-footer a:hover{color:var(--teal);text-decoration:underline;}
 </style>
 </head>
 <body>
@@ -691,6 +696,13 @@ details summary::-webkit-details-marker{display:none;}
       </div>
       <label>Theme</label>
       <div class="swatch-row" id="themeSwatches"></div>
+      <div class="field" style="margin-top:14px">
+        <label>Branding</label>
+        <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-weight:400;font-size:12.5px;color:var(--ink)">
+          <input type="checkbox" id="setupBrandingEnabled" style="width:auto">
+          Show "Powered by BYINFORGH" footer on the dashboard
+        </label>
+      </div>
       <button class="refresh-btn" style="margin-top:14px" onclick="saveSetup()">Save Settings</button>
       <div id="setupResult" style="margin-top:8px;font-size:12px"></div>
     </div>
@@ -775,6 +787,10 @@ details summary::-webkit-details-marker{display:none;}
   </div>
 </div>
 
+<div class="byif-footer" id="byifFooter" style="display:none">
+  <a href="https://wa.me/233509960980" target="_blank" rel="noopener noreferrer">Powered by BYINFORGH — Business Solutions</a> · © 2026
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -792,36 +808,36 @@ const THEMES = [
 ];
 
 const TIPS = [
-  { text: "Give value before you ask for anything. When you message a hospital about a re-order, lead with something useful - a stock tip, a delivery update - before mentioning payment.", source: "Sales Playbook - Chapter 1" },
-  { text: "Sort every contact into Cold, Warm, or Re-engage before messaging. A warm contact (spoken before) should never get a cold-opener question.", source: "Sales Playbook - Chapter 2" },
-  { text: "The golden window for asking a happy customer for a referral is 24-72 hours after they confirm they're satisfied. Wait longer and the ask loses its power.", source: "Sales Playbook - Chapter 3" },
-  { text: "State your price once, calmly, then stay quiet. The first person to speak after the price is stated usually loses the negotiation.", source: "Sales Playbook - Chapter 4" },
-  { text: "Complete every field in your WhatsApp Business profile - name, category, description, hours, location pin. An incomplete profile reads as a scam risk to a cautious buyer.", source: "WhatsApp Business OS - Chapter 1" },
-  { text: "88% of sales need 5 or more follow-ups. Most businesses give up after one message - every follow-up should bring something new: a fact, a result, a question.", source: "Sales Playbook - Chapter 5" },
-  { text: "48 hours after any delivery, send a quick satisfaction check. It catches problems early and opens the golden window for a referral ask.", source: "Referral & Retention OS - Chapter 1" },
-  { text: "A customer who bought once is 60-70% more likely to buy again vs a 5-20% chance with someone new. Retention is cheaper than acquisition - check in on quiet clients.", source: "Referral & Retention OS - Chapter 2" },
-  { text: "Label every client by loyalty tier: One-Time, Repeat, Loyal, Spotlight. Your Spotlight clients deserve priority service and first access to new stock.", source: "Referral & Retention OS - Chapter 3" },
-  { text: "'I will think about it' is usually genuine, not a no. Re-enter in 5-7 days with something new rather than repeating your last message.", source: "Sales Playbook - Chapter 4" },
-  { text: "Voice notes feel more personal than long text in Ghana. Use one for a warm re-engagement to a hospital contact who's gone quiet.", source: "Sales Playbook - The 8-Touch System" },
-  { text: "Never re-open a cold conversation just to ask for a referral or repeat an old offer. Bring a new angle - a result, a fact, a season, or a genuine check-in.", source: "Sales Playbook - Chapter 6" },
-  { text: "Reply to a new enquiry within 30 minutes during business hours where you can. The first response is the most important one - interest fades fast.", source: "WhatsApp Business OS - Chapter 3" },
-  { text: "Track every referral immediately: who sent them, when, what they need. A referral treated like a stranger is a wasted referral.", source: "Referral & Retention OS - Chapter 4" },
-  { text: "Set up your WhatsApp Away Message so no enquiry from a clinic or hospital ever sits unanswered overnight.", source: "WhatsApp Business OS - Chapter 10" },
-  { text: "Acknowledge a referral's success immediately - thank the referrer the moment their contact buys. Delayed thanks feels like an afterthought.", source: "Referral & Retention OS - Chapter 5" },
-  { text: "Update your product catalogue regularly. A stale catalogue costs enquiries - every update is also a reason to message your customer list.", source: "WhatsApp Business OS - Chapter 8" },
-  { text: "When a client goes quiet for 30-60 days, re-enter with something specific: a new product that made you think of them, not a generic 'checking in'.", source: "WhatsApp Business OS - Chapter 12" },
-  { text: "Name their specific need when reaching out - a generic message reads like a template. Specificity signals you're paying attention.", source: "Sales Playbook - Chapter 7" },
-  { text: "One sale a day, compounded, adds up fast. Consistency beats intensity - show up in the dashboard every day rather than in bursts.", source: "WhatsApp Business OS - Chapter 15" },
-  { text: "Your phone goes down the moment a customer walks in or calls. A customer who feels ignored for even a few seconds decides how the rest of the relationship will go.", source: "Customer Experience OS" },
-  { text: "Every customer gets a greeting within seconds - eye contact, a smile, a simple 'how can I help?'. It costs nothing and it's the difference between a customer who stays and one who leaves.", source: "Customer Experience OS" },
-  { text: "Never guess a price or say 'I don't know' about your own stock. If you're not sure, say 'let me find out right now' - and then actually find out.", source: "Customer Experience OS" },
-  { text: "A WhatsApp message left on two ticks with no reply, while you're clearly online, is one of the fastest ways to destroy trust before a client has even met you.", source: "WhatsApp Business OS" },
-  { text: "When a client brings back a problem, lead with 'let me look into this for you' - never 'it was fine when we sold it'. Investigate before you conclude, even if you think you're right.", source: "Customer Experience OS" },
-  { text: "Reputation is built one interaction at a time - consistent good service, following through on what you said you'd do, and treating every client the same whether they spend GHS 50 or GHS 50,000.", source: "Customer Experience OS" },
-  { text: "If you don't have what a client needs, never leave it at 'we don't have it'. Suggest an alternative, give a date it's back in stock, or offer to contact them when it arrives.", source: "Customer Experience OS" },
-  { text: "Sort clients into loyalty tiers - One-Time, Repeat, Loyal, Spotlight - and treat each differently. Your Spotlight clients should hear from you before they ever have to reach out.", source: "Referral & Retention OS" },
-  { text: "A client who goes quiet almost never chose a competitor - they just got busy and stopped being contacted. Re-enter with something new, never with 'just checking in'.", source: "Sales Playbook - Chapter 8" },
-  { text: "When negotiating price, don't reduce the number - offer a smaller entry point instead. 'Let's start with the smaller order so you can see the value first' protects your margin while lowering their risk.", source: "Sales Playbook - Chapter 9" }
+  { text: "Give value before you ask for anything. When you message a hospital about a re-order, lead with something useful — a stock tip, a delivery update — before mentioning price.", source: "Sales Playbook — The One Rule" },
+  { text: "Sort every contact into Cold, Warm, or Re-engage before messaging. A warm contact (spoken before) should never get a cold-opener question.", source: "Sales Playbook — Sort Your Contacts" },
+  { text: "The golden window for asking a happy customer for a referral is 24–72 hours after they confirm they're satisfied. Wait longer and the ask loses its power.", source: "Referral & Retention System" },
+  { text: "State your price once, calmly, then stay quiet. The first person to speak after the price is stated usually loses the negotiation.", source: "Sales Playbook — The Price Conversation" },
+  { text: "Complete every field in your WhatsApp Business profile — name, category, description, hours, location pin. An incomplete profile reads as a scam risk to a cautious buyer.", source: "WhatsApp Business Operating System" },
+  { text: "80% of sales need 5 or more follow-ups. Most businesses give up after one message — every follow-up should bring something new: a fact, a result, a question.", source: "WhatsApp Business OS — The Follow-Up System" },
+  { text: "48 hours after any delivery, send a quick satisfaction check. It catches problems early and opens the golden window for a referral ask.", source: "Referral & Retention System" },
+  { text: "A customer who bought once is 60–70% more likely to buy again vs a 5–20% chance with someone new. Retention is cheaper than acquisition — check in on quiet clients before chasing new ones.", source: "Referral & Retention System" },
+  { text: "Label every client by loyalty tier: One-Time, Repeat, Loyal, Spotlight. Your Spotlight clients deserve priority service and first access to new stock.", source: "Referral & Retention System" },
+  { text: "\\"I will think about it\\" is usually genuine, not a no. Re-enter in 5–7 days with something new rather than repeating your last message.", source: "Sales Playbook — Objection Handling" },
+  { text: "Voice notes feel more personal than long text in Ghana. Use one for a warm re-engagement to a hospital contact who's gone quiet.", source: "Sales Playbook — The 8 Behaviour Rules" },
+  { text: "Never re-open a cold conversation just to ask for a referral or repeat an old offer. Bring a new angle — a result, a fact, a season, or a genuine check-in.", source: "Sales Playbook / Referral System" },
+  { text: "Reply to a new enquiry within 30 minutes during business hours where you can. The first response is the most important one — interest fades fast.", source: "WhatsApp Business OS — Chapter 11" },
+  { text: "Track every referral immediately: who sent them, when, what they need. A referral treated like a stranger is a wasted referral.", source: "Referral & Retention System" },
+  { text: "Set up your WhatsApp Away Message so no enquiry from a clinic or hospital ever sits unanswered overnight.", source: "WhatsApp Business OS — Chapter 10" },
+  { text: "Acknowledge a referral's success immediately — thank the referrer the moment their contact buys. Delayed thanks feels like an afterthought.", source: "Referral & Retention System" },
+  { text: "Update your product catalogue regularly. A stale catalogue costs enquiries — every update is also a reason to message your customer list.", source: "WhatsApp Business OS — Chapter 3" },
+  { text: "When a client goes quiet for 30–60 days, re-enter with something specific: a new product that made you think of them, not a generic \\"checking in\\".", source: "WhatsApp Business OS — Chapter 12" },
+  { text: "Name their specific need when reaching out — a generic message reads like a template. Specificity signals you're paying attention.", source: "Sales Playbook — The 8 Behaviour Rules" },
+  { text: "One sale a day, compounded, adds up fast. Consistency beats intensity — show up in the dashboard every day rather than in bursts.", source: "WhatsApp Business OS — The Operating System" },
+  { text: "Your phone goes down the moment a customer walks in or calls. A customer who feels ignored for even a few seconds decides how the rest of the relationship will feel.", source: "Customer Service Guide — Your Presence" },
+  { text: "Every customer gets a greeting within seconds — eye contact, a smile, a simple 'how can I help?'. It costs nothing and it's the difference between a customer who stays and one who leaves.", source: "Customer Service Guide — The Greeting" },
+  { text: "Never guess a price or say 'I don't know' about your own stock. If you're not sure, say 'let me find out right now' — and then actually find out.", source: "Customer Service Guide — Know Your Products" },
+  { text: "A WhatsApp message left on two ticks with no reply, while you're clearly online, is one of the fastest ways to destroy trust before a client has even met you.", source: "Customer Service Guide — WhatsApp Communication" },
+  { text: "When a client brings back a problem, lead with 'let me look into this for you' — never 'it was fine when we sold it'. Investigate before you conclude, even if you're sure they're wrong.", source: "Customer Service Guide — Handling Difficult Situations" },
+  { text: "Reputation is built one interaction at a time — consistent good service, following through on what you said you'd do, and treating every client the same whether the order is big or small.", source: "Customer Service Guide — Building Your Reputation" },
+  { text: "If you don't have what a client needs, never leave it at 'we don't have it'. Suggest an alternative, give a date it's back in stock, or offer to contact them when it arrives.", source: "Customer Service Guide — Handling Difficult Situations" },
+  { text: "Sort clients into loyalty tiers — One-Time, Repeat, Loyal, Spotlight — and treat each differently. Your Spotlight clients should hear from you before they ever have to chase you.", source: "Referral & Retention System — Loyalty Tiers" },
+  { text: "A client who goes quiet almost never chose a competitor — they just got busy and stopped being contacted. Re-enter with something new, never with 'just checking in'.", source: "Referral & Retention System — Re-Activation" },
+  { text: "When negotiating price, don't reduce the number — offer a smaller entry point instead. 'Let's start with the smaller order so you can see the value first' protects your price and still moves things forward.", source: "Sales Playbook — The Price Conversation" }
 ];
 
 let state = { settings:{}, dailySales:{rows:[]}, debtorsCreditors:{}, expenses:{rows:[]}, clients:{rows:[]}, inventory:{rows:[]}, purchases:{rows:[]}, referrals:{rows:[]}, revenue:{}, followUps:{items:[]}, tracker:{}, callsMessages:{calls:[],messages:[]}, archive:{rows:[]}, archiveSales:{rows:[]}, clientHealth:{rows:[],counts:{}}, taxCodes:[], setupCatalog:{headers:[],rows:[]}, setupCategories:[], units:[], appointments:[], profitDash:{rows:[]}, dailyTotals:{headers:[],rows:[]}, weeklySales:{headers:[],rows:[]}, monthlyRpt:{headers:[],rows:[]}, annualSummary:{headers:[],rows:[]}, stockAnalysis:{headers:[],rows:[]} };
@@ -902,6 +918,13 @@ function applySettings(){
   document.getElementById('setupBusinessName').value = s.business_name || '';
   document.getElementById('setupIndustry').value = s.industry || '';
   renderThemeSwatches(s.primary_color);
+
+  // v4.1: BYINFORGH footer — on by default, toggled off via
+  // Setup > Business Identity > Branding checkbox (saves branding_enabled = 'false')
+  const brandingOn = s.branding_enabled !== 'false';
+  document.getElementById('byifFooter').style.display = brandingOn ? 'block' : 'none';
+  const brandingCheckbox = document.getElementById('setupBrandingEnabled');
+  if(brandingCheckbox) brandingCheckbox.checked = brandingOn;
 }
 function renderThemeSwatches(current){
   document.getElementById('themeSwatches').innerHTML = THEMES.map(t=>
@@ -1574,7 +1597,8 @@ async function saveSetup(){
     industry: document.getElementById('setupIndustry').value.trim(),
     primary_color: s.primary_color || '#0d6e63',
     secondary_color: s.secondary_color || '#2f6fa3',
-    alert_color: s.alert_color || '#b3402f'
+    alert_color: s.alert_color || '#b3402f',
+    branding_enabled: document.getElementById('setupBrandingEnabled').checked ? 'true' : 'false'
   };
   try{
     const qs = Object.keys(params).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
