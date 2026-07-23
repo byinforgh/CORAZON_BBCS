@@ -231,7 +231,7 @@ details summary::-webkit-details-marker{display:none;}
   <div class="header-right">
     <div class="live-dot"></div>
     <span class="last-refresh" id="lastRefresh">Loading...</span>
-    <button class="refresh-btn" onclick="loadData()">&#8635; Refresh</button>
+    <button class="refresh-btn" id="refreshBtn" onclick="loadData()">&#8635; Refresh</button>
   </div>
 </div>
 
@@ -787,6 +787,17 @@ details summary::-webkit-details-marker{display:none;}
         4. Reload this dashboard. The AI Assistant tab will start working immediately, no redeploy needed.
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-title">Sheet Maintenance (one-time setup, run from Apps Script editor)</div>
+      <div class="section-note" id="conflictTabNote">
+        <code>setupMaintenanceTriggers()</code> and <code>setupNamedRanges()</code> only need to be run once each, directly
+        from the Apps Script editor's function dropdown (Extensions → Apps Script → pick the function → Run) — not from
+        this dashboard. See the comment at the top of Code.gs for exact steps for each.
+      </div>
+      <button class="refresh-btn ghost" onclick="checkConflictTabs()">Check for sheet sync-conflict tabs</button>
+      <div id="conflictTabsResult" style="margin-top:8px;font-size:12px"></div>
+    </div>
   </div>
 </div>
 
@@ -799,11 +810,17 @@ details summary::-webkit-details-marker{display:none;}
 <script>
 // ==========================================================
 // CONFIG — paste your Apps Script /exec deployment URL here
-// v4.10: request de-duplication + backoff (see loadData / startPolling
-// below) so overlapping polls from multiple devices can't pile up and
-// exhaust Apps Script's concurrent-execution quota on a consumer
-// account. Client timeout raised 25s -> 35s and poll interval raised
-// 60s -> 90s to match the server-side cache TTL bump in Code.gs v4.10.
+// v4.11: smarter timeout handling (see loadData below) — a client-side
+// timeout no longer immediately clears the "in-flight" flag. Instead it
+// holds a cooldown (roughly matching the poll interval) before allowing
+// another request, because the theory from the last session is that a
+// timed-out request keeps running server-side for up to 6 minutes even
+// though the browser gave up on it. Firing a fresh request immediately
+// after a timeout (a naive "retry once") would add a SECOND concurrent
+// execution on top of the still-running first one — worse for the exact
+// pileup problem v4.10 was trying to fix, not better. The Refresh button
+// is disabled during this cooldown so a frustrated tap can't do the same
+// thing manually.
 // ==========================================================
 const API_URL = "https://script.google.com/macros/s/AKfycbzjJWbIOt1ulvcEG0jFXHL_jYkkoPzvqdMGggYzpKCgVqjN6EyFvWvSS_EWoFOvIWEH/exec";
 
@@ -942,23 +959,43 @@ function fetchWithTimeout(url, ms){
 // faster than they drained, which looks exactly like what was reported:
 // total failure for several minutes, then a full recovery. This guard
 // makes "already loading" a no-op instead of a new request.
+//
+// v4.11: on a timeout specifically, loadInFlight now stays true for an
+// extra cooldown period instead of clearing right away (see the
+// COOLDOWN_MS block inside the catch branch below). A client-side
+// timeout does not cancel the matching server-side execution — it can
+// keep running for up to 6 minutes regardless of what the browser shows.
+// Letting the next poll or a manual Refresh fire immediately after a
+// timeout would start a second execution on top of the first one still
+// running — the same pileup mechanism v4.10 targeted, just re-introduced
+// through the "recover quickly" path instead of the "poll every 60s"
+// path. The Refresh button is disabled for the same window so a
+// frustrated tap can't do it manually either.
 let loadInFlight = false;
+const TIMEOUT_COOLDOWN_MS = 75000; // a little under the 90s poll interval
+
+function setRefreshEnabled(enabled){
+  const btn = document.getElementById('refreshBtn');
+  if(btn) btn.disabled = !enabled;
+}
 
 async function loadData(){
   if(loadInFlight){
-    console.log('loadData skipped — a request is already in flight');
+    console.log('loadData skipped — a request is already in flight (or in post-timeout cooldown)');
     return;
   }
   loadInFlight = true;
+  setRefreshEnabled(false);
   document.getElementById('lastRefresh').textContent = 'Refreshing...';
   if(API_URL.indexOf('PASTE_YOUR') === 0){
     document.getElementById('lastRefresh').textContent = 'Not connected — paste your Apps Script URL into API_URL';
     renderTip();
     loadInFlight = false;
+    setRefreshEnabled(true);
     return;
   }
   try{
-    // v4.10: 25s -> 35s. Paired with the server-side cache TTL bump in
+    // 25s -> 35s (v4.10). Paired with the server-side cache TTL bump in
     // Code.gs v4.10, most requests should now return in under a second;
     // this just gives a genuinely slow one a bit more room before the
     // client gives up on it.
@@ -997,17 +1034,42 @@ async function loadData(){
     safeRender(renderTip, 'renderTip');
 
     document.getElementById('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    // A successful response proves the earlier execution actually
+    // finished, so it's safe to release the flag immediately here.
+    loadInFlight = false;
+    setRefreshEnabled(true);
   }catch(e){
     if(e && e.message === 'timeout'){
-      document.getElementById('lastRefresh').textContent = 'Timed out — tap Refresh to try again';
+      // v4.11: do NOT clear loadInFlight here. The server-side execution
+      // behind this request may still be running for up to 6 minutes —
+      // see the header comment. Hold the flag (and the disabled Refresh
+      // button) for a cooldown so neither the next scheduled poll nor an
+      // impatient manual tap can stack a second execution on top of it.
+      // A countdown in the status line makes the wait legible instead of
+      // looking like the dashboard has just frozen.
+      let remaining = Math.ceil(TIMEOUT_COOLDOWN_MS / 1000);
+      const label = document.getElementById('lastRefresh');
+      label.textContent = 'Timed out — waiting ' + remaining + 's before retrying (may still be processing)';
+      const countdown = setInterval(() => {
+        remaining -= 1;
+        if(remaining > 0){
+          label.textContent = 'Timed out — waiting ' + remaining + 's before retrying (may still be processing)';
+        } else {
+          clearInterval(countdown);
+        }
+      }, 1000);
+      setTimeout(() => {
+        clearInterval(countdown);
+        loadInFlight = false;
+        setRefreshEnabled(true);
+        document.getElementById('lastRefresh').textContent = 'Ready — tap Refresh to try again';
+      }, TIMEOUT_COOLDOWN_MS);
     } else {
       document.getElementById('lastRefresh').textContent = 'Offline — check connection';
+      loadInFlight = false;
+      setRefreshEnabled(true);
     }
     console.log('Load error', e);
-  } finally {
-    // v4.10: always release the in-flight flag, success or failure, so
-    // a single bad request can never permanently block future refreshes.
-    loadInFlight = false;
   }
 }
 
@@ -1865,17 +1927,33 @@ async function submitNewUnit(){
   }catch(e){ showToast('Connection error'); }
 }
 
+// ---------- SETUP: v4.11 conflict-tab check (read-only) ----------
+async function checkConflictTabs(){
+  const el = document.getElementById('conflictTabsResult');
+  el.innerHTML = '<span style="color:var(--ink-dim)">Checking...</span>';
+  try{
+    const res = await fetch(API_URL + '?action=listConflictTabs&t=' + Date.now());
+    const data = await res.json();
+    if(!data.success){ el.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not check') + '</span>'; return; }
+    if(!data.count){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">None found — sheet is clean.</span>'; return; }
+    el.innerHTML = '<div style="color:var(--coral);font-weight:600;margin-bottom:6px">' + data.count + ' conflict tab(s) found:</div>' +
+      data.conflictTabs.map(t=>`<div style="margin-bottom:4px">• <b>${escapeHtml(t.name)}</b> — ${t.lastRow} row(s), ${t.lastColumn} column(s)</div>`).join('') +
+      '<div class="section-note" style="margin-top:8px">Open each in Google Sheets, compare against DASHBOARD_SETTINGS, and delete the outdated copy manually — this check only reports, it never deletes.</div>';
+  }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
+}
+
 // v4.8 P1 fix: pause the auto-poll when this tab is in the
 // background (Page Visibility API), resume immediately on return. Cuts
 // wasted Apps Script quota for anyone who leaves the dashboard open in a
 // background tab all day, and does one immediate refresh on return so
 // the data isn't stale after being away a while. loadData()'s own
-// in-flight guard (v4.10) makes this safe even if a background poll was
-// still technically pending when the tab becomes visible again.
+// in-flight guard (v4.10, extended in v4.11 with a timeout cooldown)
+// makes this safe even if a background poll was still technically
+// pending when the tab becomes visible again.
 let pollTimer = null;
 function startPolling(){
   if(pollTimer) return;
-  // v4.10: 60s -> 90s, paired with the server-side cache TTL bump in
+  // 60s -> 90s (v4.10), paired with the server-side cache TTL bump in
   // Code.gs v4.10. Fewer total requests across every open device means
   // fewer opportunities for concurrent executions to pile up.
   pollTimer = setInterval(loadData, 90000);
