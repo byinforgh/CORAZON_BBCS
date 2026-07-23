@@ -799,6 +799,11 @@ details summary::-webkit-details-marker{display:none;}
 <script>
 // ==========================================================
 // CONFIG — paste your Apps Script /exec deployment URL here
+// v4.10: request de-duplication + backoff (see loadData / startPolling
+// below) so overlapping polls from multiple devices can't pile up and
+// exhaust Apps Script's concurrent-execution quota on a consumer
+// account. Client timeout raised 25s -> 35s and poll interval raised
+// 60s -> 90s to match the server-side cache TTL bump in Code.gs v4.10.
 // ==========================================================
 const API_URL = "https://script.google.com/macros/s/AKfycbzjJWbIOt1ulvcEG0jFXHL_jYkkoPzvqdMGggYzpKCgVqjN6EyFvWvSS_EWoFOvIWEH/exec";
 
@@ -927,18 +932,37 @@ function fetchWithTimeout(url, ms){
   });
 }
 
+// v4.10: prevents overlapping loadData() calls. Previously, if a request
+// took longer than the poll interval (or someone tapped Refresh while a
+// poll was still in flight), a second doGet() would fire on top of the
+// first. The client "timing out" at 25s never actually cancelled the
+// first request server-side — it kept running on Google's servers (up to
+// the 6-minute hard cap) and still held a concurrency slot. With every
+// open tab/device doing this independently, executions could pile up
+// faster than they drained, which looks exactly like what was reported:
+// total failure for several minutes, then a full recovery. This guard
+// makes "already loading" a no-op instead of a new request.
+let loadInFlight = false;
+
 async function loadData(){
+  if(loadInFlight){
+    console.log('loadData skipped — a request is already in flight');
+    return;
+  }
+  loadInFlight = true;
   document.getElementById('lastRefresh').textContent = 'Refreshing...';
   if(API_URL.indexOf('PASTE_YOUR') === 0){
     document.getElementById('lastRefresh').textContent = 'Not connected — paste your Apps Script URL into API_URL';
     renderTip();
+    loadInFlight = false;
     return;
   }
   try{
-    // v4.4: hard timeout so a slow/stuck connection can never leave the
-    // dashboard stuck on "Refreshing..." forever — it now fails visibly
-    // after 20s instead of hanging indefinitely.
-    const res = await fetchWithTimeout(API_URL + '?t=' + Date.now(), 25000);
+    // v4.10: 25s -> 35s. Paired with the server-side cache TTL bump in
+    // Code.gs v4.10, most requests should now return in under a second;
+    // this just gives a genuinely slow one a bit more room before the
+    // client gives up on it.
+    const res = await fetchWithTimeout(API_URL + '?t=' + Date.now(), 35000);
     const data = await res.json();
     state = Object.assign(state, data);
 
@@ -980,6 +1004,10 @@ async function loadData(){
       document.getElementById('lastRefresh').textContent = 'Offline — check connection';
     }
     console.log('Load error', e);
+  } finally {
+    // v4.10: always release the in-flight flag, success or failure, so
+    // a single bad request can never permanently block future refreshes.
+    loadInFlight = false;
   }
 }
 
@@ -1837,15 +1865,20 @@ async function submitNewUnit(){
   }catch(e){ showToast('Connection error'); }
 }
 
-// v4.8 P1 fix: pause the 60s auto-poll when this tab is in the
+// v4.8 P1 fix: pause the auto-poll when this tab is in the
 // background (Page Visibility API), resume immediately on return. Cuts
 // wasted Apps Script quota for anyone who leaves the dashboard open in a
 // background tab all day, and does one immediate refresh on return so
-// the data isn't stale after being away a while.
+// the data isn't stale after being away a while. loadData()'s own
+// in-flight guard (v4.10) makes this safe even if a background poll was
+// still technically pending when the tab becomes visible again.
 let pollTimer = null;
 function startPolling(){
   if(pollTimer) return;
-  pollTimer = setInterval(loadData, 60000);
+  // v4.10: 60s -> 90s, paired with the server-side cache TTL bump in
+  // Code.gs v4.10. Fewer total requests across every open device means
+  // fewer opportunities for concurrent executions to pile up.
+  pollTimer = setInterval(loadData, 90000);
 }
 function stopPolling(){
   if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
@@ -1865,4 +1898,3 @@ startPolling();
 </script>
 </body>
 </html>
-
