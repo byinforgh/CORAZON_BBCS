@@ -849,6 +849,23 @@ let chatHistory = [];
 let calViewDate = new Date();
 let calSelectedDate = new Date();
 
+// v4.8 P0 fix: escape any sheet-originated or user-typed text before it
+// goes into an innerHTML template literal. Previously nearly every
+// render function inserted sheet data straight into innerHTML — a stray
+// "<" or "<script>" typed into a customer name, note, or expense
+// description would render as HTML instead of text. Not a real security
+// boundary here (single trusted-user tool) but it visibly breaks rows
+// and is a one-line fix per value.
+function escapeHtml(v){
+  if(v === null || v === undefined) return '';
+  return v.toString()
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
 function switchTab(name, btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -996,7 +1013,7 @@ function applySettings(){
 }
 function renderThemeSwatches(current){
   document.getElementById('themeSwatches').innerHTML = THEMES.map(t=>
-    `<div class="swatch ${t.primary===current?'selected':''}" style="background:${t.primary}" title="${t.name}" onclick="pickTheme('${t.primary}','${t.secondary}','${t.alert}')"></div>`
+    `<div class="swatch ${t.primary===current?'selected':''}" style="background:${t.primary}" title="${escapeHtml(t.name)}" onclick="pickTheme('${t.primary}','${t.secondary}','${t.alert}')"></div>`
   ).join('');
 }
 function pickTheme(primary, secondary, alert){
@@ -1062,7 +1079,7 @@ function renderHome(){
   const topFu = (fu.items||[]).slice(0,6);
   document.getElementById('homeFollowUps').innerHTML = topFu.length ? topFu.map(i=>`
     <div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
-      <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}</span></div>
+      <div class="due-left"><b>${escapeHtml(i.name)||'—'}</b><span>${escapeHtml(i.kind)} · ${escapeHtml(i.detail)}</span></div>
       <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
     </div>
   `).join('') : '<div class="empty">Nothing due — clean books</div>';
@@ -1095,7 +1112,7 @@ function renderHome(){
   const recent = (ds.rows||[]).slice(0,8);
   document.getElementById('homeRecentSales').innerHTML = recent.length ? recent.map(r=>
     `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
-      <div><strong>${r.product||'—'}</strong><br><span style="color:var(--ink-dim);font-size:11px">${r.customer||'—'} · ${r.date||''}</span></div>
+      <div><strong>${escapeHtml(r.product)||'—'}</strong><br><span style="color:var(--ink-dim);font-size:11px">${escapeHtml(r.customer)||'—'} · ${escapeHtml(r.date)||''}</span></div>
       <div class="mono" style="text-align:right">${fmtMoney(r.revenue)}</div>
     </div>`).join('') : '<div class="empty">No sales logged yet</div>';
 
@@ -1107,7 +1124,7 @@ function renderHome(){
   activity = activity.slice(0,10);
   document.getElementById('homeActivity').innerHTML = activity.length ? activity.map(a=>`
     <div class="activity-item"><div class="activity-icon">${a.icon}</div>
-      <div><strong>${a.label}</strong><br><span style="color:var(--ink-dim)">${a.detail} · ${a.date}</span></div>
+      <div><strong>${escapeHtml(a.label)}</strong><br><span style="color:var(--ink-dim)">${escapeHtml(a.detail)} · ${escapeHtml(a.date)}</span></div>
     </div>`).join('') : '<div class="empty">No activity logged yet</div>';
 }
 
@@ -1123,7 +1140,7 @@ async function quickLogCall(){
     const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['hcBusiness','hcNumber','hcNotes','hcNextAction','hcNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    else document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ document.getElementById('hcResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function quickLogMessage(){
@@ -1136,7 +1153,7 @@ async function quickLogMessage(){
     const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['hmBusiness','hmSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    else document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ document.getElementById('hmResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
@@ -1153,7 +1170,7 @@ function renderFollowUpsFull(){
     if(!list.length) return '';
     return `<div style="margin-bottom:16px"><div class="card-title" style="margin-bottom:8px">${title} (${list.length})</div>` +
       list.map(i=>`<div class="due-item ${i.daysUntil<0?'overdue':(i.daysUntil===0?'today':'')}">
-        <div class="due-left"><b>${i.name||'—'}</b><span>${i.kind} · ${i.detail}${i.dueDate?' · due '+i.dueDate:''}</span></div>
+        <div class="due-left"><b>${escapeHtml(i.name)||'—'}</b><span>${escapeHtml(i.kind)} · ${escapeHtml(i.detail)}${i.dueDate?' · due '+escapeHtml(i.dueDate):''}</span></div>
         <div class="due-tag ${daysTagClass(i.daysUntil)}">${daysLabel(i.daysUntil)}</div>
       </div>`).join('') + `</div>`;
   }
@@ -1218,7 +1235,7 @@ function renderAgenda(){
   }
   document.getElementById('agendaList').innerHTML = items.length ? items.map(it=>`
     <div class="agenda-item">
-      <span>${it.label}</span>
+      <span>${escapeHtml(it.label)}</span>
       ${it.type==='appt' ? `<button class="refresh-btn ghost agenda-del" onclick="removeAppointment(${it.row})">Remove</button>` : ''}
     </div>`).join('') : '<div class="empty">Nothing scheduled this day</div>';
 }
@@ -1234,7 +1251,7 @@ async function submitAppointment(){
     const res = await fetch(API_URL + '?action=logAppointment&' + qs + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Appointment added'); ['apptTitle','apptClient','apptNotes'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    else document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ document.getElementById('apptResult').innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function removeAppointment(row){
@@ -1253,7 +1270,7 @@ function renderTracker(){
     const maxVal = Math.max.apply(null, trend.map(m=>m.revenue)) || 1;
     document.getElementById('trendChart').innerHTML = `<div class="bar-chart">` + trend.map(m=>{
       const h = Math.max(4, (m.revenue/maxVal)*120);
-      return `<div class="bar-col"><div class="bar-value">${fmtMoneyShort(m.revenue)}</div><div class="bar" style="height:${h}px"></div><div class="bar-label">${m.label}</div></div>`;
+      return `<div class="bar-col"><div class="bar-value">${fmtMoneyShort(m.revenue)}</div><div class="bar" style="height:${h}px"></div><div class="bar-label">${escapeHtml(m.label)}</div></div>`;
     }).join('') + `</div>`;
   } else {
     document.getElementById('trendChart').innerHTML = '<div class="empty">No sales history yet</div>';
@@ -1262,7 +1279,7 @@ function renderTracker(){
   const top = t.topClients || [];
   document.getElementById('topClientsList').innerHTML = top.length ? top.map((c,i)=>`
     <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px">
-      <div><span class="mono" style="color:var(--ink-dim)">#${i+1}</span> <strong>${c.name}</strong></div>
+      <div><span class="mono" style="color:var(--ink-dim)">#${i+1}</span> <strong>${escapeHtml(c.name)}</strong></div>
       <div class="mono">${fmtMoney(c.revenue)}</div>
     </div>`).join('') : '<div class="empty">No sales history yet</div>';
 
@@ -1288,15 +1305,15 @@ function renderTracker(){
   const pd = state.profitDash || { rows: [] };
   document.getElementById('profitDashBody').innerHTML = pd.rows && pd.rows.length ? pd.rows.map(r=>
     r.isSection
-      ? `<div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;color:var(--teal);margin:12px 0 4px">${r.label}</div>`
-      : `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px"><span>${r.label}</span><span class="mono">${r.value}</span></div>`
+      ? `<div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;color:var(--teal);margin:12px 0 4px">${escapeHtml(r.label)}</div>`
+      : `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-soft);font-size:12.5px"><span>${escapeHtml(r.label)}</span><span class="mono">${escapeHtml(r.value)}</span></div>`
   ).join('') : '<div class="empty">PROFIT_DASH sheet not found or empty</div>';
 }
 function renderSheetMirrorTable(stateKey, headEl, bodyEl){
   const t = state[stateKey] || { headers: [], rows: [] };
-  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
   document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(0,400).map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+    '<tr>' + (t.headers||[]).map(h=>`<td>${escapeHtml(r[h])}</td>`).join('') + '</tr>'
   ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No data found on this sheet yet</td></tr>`;
 }
 
@@ -1313,7 +1330,7 @@ function renderClientHealth(){
   document.getElementById('healthBoardFull').innerHTML = boardHtml;
   const rows = health.rows || [];
   document.getElementById('healthTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.customer}</td><td>${r.label}</td><td>${r.lastOrder}</td><td class="mono">${r.daysSince}d</td><td class="mono">${fmtMoney(r.totalRevenue)}</td></tr>`
+    `<tr><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.lastOrder)}</td><td class="mono">${r.daysSince}d</td><td class="mono">${fmtMoney(r.totalRevenue)}</td></tr>`
   ).join('') : '<tr><td colspan="5" class="empty">No client order history yet</td></tr>';
 }
 
@@ -1323,7 +1340,7 @@ function renderTaxDropdown(){
   const codes = (state.taxCodes || []).filter(c=>c.active);
   const current = sel.value;
   sel.innerHTML = '<option value="">Use default</option>' + codes.map(c=>
-    `<option value="${c.rate}">${c.code} (${c.rate}%)${c.description?' — '+c.description:''}</option>`
+    `<option value="${c.rate}">${escapeHtml(c.code)} (${c.rate}%)${c.description?' — '+escapeHtml(c.description):''}</option>`
   ).join('');
   if(current) sel.value = current;
 }
@@ -1337,7 +1354,7 @@ function renderSales(){
   `;
   const rows = ds.rows || [];
   document.getElementById('salesTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.date||''}</td><td>${r.customer||''}</td><td>${r.product||''}</td><td>${r.qty||''}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td><td>${r.paymentMethod||''}</td></tr>`
+    `<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.product)}</td><td>${escapeHtml(r.qty)}</td><td class="mono">${fmtMoney(r.revenue)}</td><td class="mono">${fmtMoney(r.grossProfit)}</td><td>${escapeHtml(r.paymentMethod)}</td></tr>`
   ).join('') : '<tr><td colspan="7" class="empty">No sales yet</td></tr>';
   if(!document.getElementById('saleDate').value) document.getElementById('saleDate').valueAsDate = new Date();
 }
@@ -1366,7 +1383,7 @@ async function submitSale(){
       ['saleCustomer','saleStockCode','saleQty','saleDiscount','saleNotes'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('saleTax').value=''; document.getElementById('salePaymentMethod').value='';
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
@@ -1377,7 +1394,7 @@ function buildGenericForm(containerId, headers, prefix){
   el.innerHTML = headers.map((h,i)=>{
     const id = prefix + '_' + i;
     const isDate = /date/i.test(h);
-    return `<div class="field"><label>${h}</label><input type="${isDate?'date':'text'}" id="${id}" data-header="${h.replace(/"/g,'&quot;')}"></div>`;
+    return `<div class="field"><label>${escapeHtml(h)}</label><input type="${isDate?'date':'text'}" id="${id}" data-header="${escapeHtml(h)}"></div>`;
   }).join('');
 }
 async function submitGenericAdd(stateKey, action){
@@ -1402,14 +1419,14 @@ async function submitGenericAdd(stateKey, action){
       showToast('Saved');
       headers.forEach((h,i)=>{ const inp = document.getElementById(prefix+'_'+i); if(inp) inp.value=''; });
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 function renderGenericTable(stateKey, headEl, bodyEl){
   const t = state[stateKey] || { headers:[], rows:[] };
-  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById(headEl).innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
   document.getElementById(bodyEl).innerHTML = (t.rows||[]).length ? t.rows.slice(-200).reverse().map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+    '<tr>' + (t.headers||[]).map(h=>`<td>${escapeHtml(r[h])}</td>`).join('') + '</tr>'
   ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No entries yet</td></tr>`;
 }
 
@@ -1421,11 +1438,11 @@ function renderReferrals(){ buildGenericForm('referralsFormFields', (state.refer
 // ---------- INVENTORY (read-only) ----------
 function renderInventory(){
   const t = state.inventory || { headers:[], rows:[] };
-  document.getElementById('inventoryTableHead').innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById('inventoryTableHead').innerHTML = '<tr>' + (t.headers||[]).map(h=>`<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
   const q = (document.getElementById('inventorySearch').value||'').toLowerCase();
   const rows = (t.rows||[]).filter(r=> !q || Object.values(r).some(v=>(v||'').toString().toLowerCase().includes(q)));
   document.getElementById('inventoryTableBody').innerHTML = rows.length ? rows.slice(0,300).map(r=>
-    '<tr>' + (t.headers||[]).map(h=>`<td>${r[h]||''}</td>`).join('') + '</tr>'
+    '<tr>' + (t.headers||[]).map(h=>`<td>${escapeHtml(r[h])}</td>`).join('') + '</tr>'
   ).join('') : `<tr><td colspan="${(t.headers||[]).length||1}" class="empty">No matching items</td></tr>`;
 }
 
@@ -1447,10 +1464,11 @@ function renderDCTable(kind, table, chipsEl, bodyEl){
   const rows = table.rows || [];
   document.getElementById(bodyEl).innerHTML = rows.length ? rows.map(r=>{
     const statusBadge = r.balance <= 0 ? '<span class="badge cleared">Cleared</span>' : (r.daysOverdue>0 ? '<span class="badge overdue">Overdue</span>' : '<span class="badge pending">Pending</span>');
+    const safeName = escapeHtml(r.name).replace(/'/g,"\\'");
     const actionBtn = r.balance>0
       ? `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="markCleared('${kind}',${r.row},${r.amountOwed})">Mark cleared</button>`
-      : `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="archiveOne('${kind}',${r.row},'${(r.name||'').replace(/'/g,"\\'")}')">Archive</button>`;
-    return `<tr><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td class="mono">${fmtMoney(r.balance)}</td><td>${statusBadge}</td>
+      : `<button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="archiveOne('${kind}',${r.row},'${safeName}')">Archive</button>`;
+    return `<tr><td>${escapeHtml(r.name)}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td class="mono">${fmtMoney(r.balance)}</td><td>${statusBadge}</td>
       <td>${actionBtn}</td></tr>`;
   }).join('') : '<tr><td colspan="6" class="empty">Nothing here yet</td></tr>';
 }
@@ -1479,7 +1497,7 @@ async function submitDebtorCreditor(kind){
       resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>';
       showToast((kind==='debtor'?'Debtor':'Creditor') + ' added');
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function markCleared(kind, row, amountOwed){
@@ -1505,7 +1523,7 @@ async function sweepArchive(){
     const res = await fetch(API_URL + '?action=sweepArchiveDC&t=' + Date.now());
     const data = await res.json();
     if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' account(s) archived</span>'; showToast('Archive swept'); loadData(); }
-    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
+    else el.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not sweep') + '</span>';
   }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
@@ -1523,7 +1541,7 @@ async function submitCall(){
     const res = await fetch(API_URL + '?action=logCall&' + qs + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Call logged'); ['callBusiness','callNumber','callNotes','callNextAction','callNextFollowUp'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function submitMessage(){
@@ -1537,18 +1555,18 @@ async function submitMessage(){
     const res = await fetch(API_URL + '?action=logMessage&' + qs + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ resultEl.innerHTML = '<span style="color:var(--teal);font-weight:600">Saved</span>'; showToast('Message logged'); ['msgBusiness','msgSummary'].forEach(id=>document.getElementById(id).value=''); loadData(); }
-    else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 function renderCallsMessages(){
   const cm = state.callsMessages || { calls: [], messages: [] };
   const calls = cm.calls || [];
   document.getElementById('callsTableBody').innerHTML = calls.length ? calls.map(c=>
-    `<tr><td>${c.date||''}</td><td>${c.business||''}</td><td>${c.number||''}</td><td>${c.notes||''}</td><td>${c.nextAction||''}</td><td>${c.nextFollowUp||''}</td></tr>`
+    `<tr><td>${escapeHtml(c.date)}</td><td>${escapeHtml(c.business)}</td><td>${escapeHtml(c.number)}</td><td>${escapeHtml(c.notes)}</td><td>${escapeHtml(c.nextAction)}</td><td>${escapeHtml(c.nextFollowUp)}</td></tr>`
   ).join('') : '<tr><td colspan="6" class="empty">No calls logged yet</td></tr>';
   const messages = cm.messages || [];
   document.getElementById('messagesTableBody').innerHTML = messages.length ? messages.map(m=>
-    `<tr><td>${m.date||''}</td><td>${m.business||''}</td><td>${m.channel||''}</td><td>${m.summary||''}</td></tr>`
+    `<tr><td>${escapeHtml(m.date)}</td><td>${escapeHtml(m.business)}</td><td>${escapeHtml(m.channel)}</td><td>${escapeHtml(m.summary)}</td></tr>`
   ).join('') : '<tr><td colspan="4" class="empty">No messages logged yet</td></tr>';
 }
 
@@ -1563,7 +1581,7 @@ function renderArchiveFiltered(){
   const q = (document.getElementById('archiveSearch').value||'').toLowerCase();
   const rows = (arch.rows||[]).filter(r=> !q || (r.name||'').toLowerCase().includes(q));
   document.getElementById('archiveTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.archivedDate}</td><td><span class="badge blue">${r.type}</span></td><td>${r.name}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td>${r.reason}</td>
+    `<tr><td>${escapeHtml(r.archivedDate)}</td><td><span class="badge blue">${escapeHtml(r.type)}</span></td><td>${escapeHtml(r.name)}</td><td class="mono">${fmtMoney(r.amountOwed)}</td><td class="mono">${fmtMoney(r.amountPaid)}</td><td>${escapeHtml(r.reason)}</td>
       <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchived(${r.row})">Restore</button></td></tr>`
   ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
 }
@@ -1582,7 +1600,7 @@ function renderArchiveSales(){
   document.getElementById('archiveSalesCountBadge').textContent = arch.rows && arch.rows.length ? ' (' + arch.rows.length + ')' : '';
   const rows = arch.rows || [];
   document.getElementById('archiveSalesTableBody').innerHTML = rows.length ? rows.map(r=>
-    `<tr><td>${r.archivedDate}</td><td>${r.date}</td><td>${r.customer}</td><td>${r.product}</td><td>${r.qty}</td><td class="mono">${fmtMoney(r.revenue)}</td>
+    `<tr><td>${escapeHtml(r.archivedDate)}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.product)}</td><td>${escapeHtml(r.qty)}</td><td class="mono">${fmtMoney(r.revenue)}</td>
       <td><button class="refresh-btn ghost" style="padding:4px 8px;font-size:10px" onclick="restoreArchivedSale(${r.row})">Restore</button></td></tr>`
   ).join('') : '<tr><td colspan="7" class="empty">Nothing archived yet</td></tr>';
 }
@@ -1594,7 +1612,7 @@ async function sweepArchiveSales(){
     const res = await fetch(API_URL + '?action=sweepArchiveSales&months=' + encodeURIComponent(months) + '&t=' + Date.now());
     const data = await res.json();
     if(data.success){ el.innerHTML = '<span style="color:var(--teal);font-weight:600">' + data.archived + ' sale(s) archived</span>'; showToast('Sales archive swept'); loadData(); }
-    else el.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not sweep') + '</span>';
+    else el.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not sweep') + '</span>';
   }catch(e){ el.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function restoreArchivedSale(row){
@@ -1623,7 +1641,7 @@ function buildDashboardContext(){
 function renderChatLog(){
   const log = document.getElementById('chatLog');
   log.innerHTML = chatHistory.map(m=>
-    `<div class="chat-msg ${m.role==='user'?'user':'assistant'}"><div class="bubble">${(m.content||'').toString().replace(/</g,'&lt;').replace(/\\n/g,'<br>')}</div></div>`
+    `<div class="chat-msg ${m.role==='user'?'user':'assistant'}"><div class="bubble">${escapeHtml(m.content).replace(/\\n/g,'<br>')}</div></div>`
   ).join('');
   log.scrollTop = log.scrollHeight;
 }
@@ -1678,7 +1696,7 @@ async function saveSetup(){
       state.settings = data.settings;
       applySettings();
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
@@ -1718,7 +1736,7 @@ async function saveTargets(){
       showToast('Targets saved');
       state.settings = data.settings;
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 
@@ -1726,29 +1744,29 @@ async function saveTargets(){
 function renderCatalogFormOptions(){
   const catSel = document.getElementById('catCategory');
   const cats = state.setupCategories || [];
-  catSel.innerHTML = '<option value="">—</option>' + cats.map(c=>`<option>${c}</option>`).join('');
+  catSel.innerHTML = '<option value="">—</option>' + cats.map(c=>`<option>${escapeHtml(c)}</option>`).join('');
   const unitSel = document.getElementById('catUnit');
   const units = state.units || [];
-  unitSel.innerHTML = '<option value="">—</option>' + units.map(u=>`<option>${u}</option>`).join('');
+  unitSel.innerHTML = '<option value="">—</option>' + units.map(u=>`<option>${escapeHtml(u)}</option>`).join('');
 }
 function renderCategoryChips(){
   const cats = state.setupCategories || [];
-  document.getElementById('categoryChips').innerHTML = cats.length ? cats.map(c=>`<span class="chip">${c}</span>`).join('') : '<span class="section-note">No categories found yet</span>';
+  document.getElementById('categoryChips').innerHTML = cats.length ? cats.map(c=>`<span class="chip">${escapeHtml(c)}</span>`).join('') : '<span class="section-note">No categories found yet</span>';
 }
 function renderUnitChips(){
   const units = state.units || [];
-  document.getElementById('unitChips').innerHTML = units.length ? units.map(u=>`<span class="chip">${u}</span>`).join('') : '<span class="section-note">No units yet</span>';
+  document.getElementById('unitChips').innerHTML = units.length ? units.map(u=>`<span class="chip">${escapeHtml(u)}</span>`).join('') : '<span class="section-note">No units yet</span>';
 }
 function renderCatalogTable(){
   const catalog = state.setupCatalog || { rows: [] };
   const rows = catalog.rows || [];
   document.getElementById('catalogTableBody').innerHTML = rows.length ? rows.map(r=>`
     <tr>
-      <td>${r.stockCode||''}</td>
-      <td>${r.name||''}</td>
-      <td class="mono">${r.unitCost||''}</td>
-      <td class="mono">${r.previousUnitCost||''}</td>
-      <td>${r.priceChangedDate||''}</td>
+      <td>${escapeHtml(r.stockCode)}</td>
+      <td>${escapeHtml(r.name)}</td>
+      <td class="mono">${escapeHtml(r.unitCost)}</td>
+      <td class="mono">${escapeHtml(r.previousUnitCost)}</td>
+      <td>${escapeHtml(r.priceChangedDate)}</td>
       <td>
         <div class="catalog-row-actions">
           <input type="number" placeholder="New cost" style="width:90px" id="newcost_${r.sheetRow}">
@@ -1782,7 +1800,7 @@ async function submitCatalogProduct(){
       showToast('Product added to catalog');
       ['catStockCode','catName','catReorder','catSupplier','catUnitCost','catRetailPrice'].forEach(id=>document.getElementById(id).value='');
       loadData();
-    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + (data.error||'Could not save') + '</span>';
+    } else resultEl.innerHTML = '<span style="color:var(--coral)">' + escapeHtml(data.error||'Could not save') + '</span>';
   }catch(e){ resultEl.innerHTML = '<span style="color:var(--coral)">Connection error</span>'; }
 }
 async function submitCostUpdate(sheetRow){
@@ -1819,9 +1837,31 @@ async function submitNewUnit(){
   }catch(e){ showToast('Connection error'); }
 }
 
+// v4.8 P1 fix: pause the 60s auto-poll when this tab is in the
+// background (Page Visibility API), resume immediately on return. Cuts
+// wasted Apps Script quota for anyone who leaves the dashboard open in a
+// background tab all day, and does one immediate refresh on return so
+// the data isn't stale after being away a while.
+let pollTimer = null;
+function startPolling(){
+  if(pollTimer) return;
+  pollTimer = setInterval(loadData, 60000);
+}
+function stopPolling(){
+  if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+}
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden){
+    stopPolling();
+  } else {
+    loadData();
+    startPolling();
+  }
+});
+
 renderTip();
 loadData();
-setInterval(loadData, 60000);
+startPolling();
 </script>
 </body>
 </html>
